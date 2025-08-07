@@ -1,0 +1,92 @@
+{
+  // -- Key bindings for MailMate (see the end of this document for useful links).
+  // -- This file goes in ~/Library/Application Support/MailMate/Resources/KeyBindings
+
+  // t tab              \n enter          \r return         \U001b escape      \U007f delete      \Uf700 up
+  // \Uf701 down        \Uf702 left       \Uf703 right      \Uf704 F1          \Uf705 F2          \Uf706 F3
+  // \Uf707 F4          \Uf708 F5         \Uf709 F6         \Uf70a F7          \Uf70b F8          \Uf70c F9
+  // \Uf70d F10         \Uf70e F11        \Uf70f F12        \Uf710 F13         \Uf711 F14         \Uf712 F15
+  // \Uf713 F16         \Uf714 F17        \Uf715 F18        \Uf716 F19         \Uf717 F20         \Uf728 fwd delete
+  // \Uf729 home        \Uf72b end        \Uf72c page up    \Uf72d page down   \Uf739 clear
+
+  // "⌃\Uf700" = " :"; // previous flagged message
+  // "⌃\Uf701" = " :"; // next flagged message
+
+  "e" = "expandAll:"; // expands all threads 
+  "E" = "collapseAll:"; // collapses all threads 
+
+  "T" = "showThread:"; // lower-case t doesn't work because it's bound to tags (?)
+  "l" = "copyAsLink:"; // copies message:// link for selected message
+
+  "@\\UF700" = "scrollToTop:"; // cmd left scrollToTop: 
+  "@\\UF703" = "scrollToBottom:"; // cmd right scrollToBottom:
+
+  "@[" = "backInHistory:"; // moves back in history, e.g. back to mailbox after performing a search. ESC also works for this.
+  "@]" = "forwardInHistory:";
+
+  "@f" = "searchAllMessages:";
+  "F" = "mailboxSearch:";
+
+  "0" = ("makeFirstResponder:", "mainOutline"); // move focus to message list
+  "9" = ("makeFirstResponder:", "messageView"); // move focus to message view (for scrolling with arrows)
+  "D" = "saveAttachmentsInDownloads:";
+  "⌃j" = ("makeFirstResponder:", "messageEditor");
+  "d" = "deleteMessage:"; 
+  "L" = "loadImagesOnce:"; // load remote images once
+  "h" = "nextAlternative:"; // shows HTML view of message (I have MM set to default to plain text when viewing messages)
+  "g" = "goToMailbox:";
+  "m" = "moveToMailbox:";
+  "C" = "showCorrespondence:"; // show all messages to/from the sender of the selected message
+
+  "r" = "markAsRead:";
+  "R" = ("markAsRead:", "nextUnreadMessage:");
+  "n" = "nextUnreadMessage:";
+  "@\Uf700" = " :"; // previous unread message
+  "@\Uf701" = " :"; // next unread message
+  
+
+  "u" = "markAsUnread:";
+  "." = "toggleFlag:";
+  "f" = "forwardMessage:";
+  // "ff" = "forwardAsAttachment:";
+
+  
+  "t" = "nextMode:";
+
+  "j" = ("markAsJunk:", "moveToMailbox", ":Junk");
+  "J" = ("markAsNotJunt:", "markAsUnread:", "moveToMailbox", ":Inbox");
+
+  // you going places
+  "G" = {
+    "g" = ("makeFirstResponder:", "mainOutline", "selectFirstMessageRow:"); // goes to 1st message
+    "G" = ("makeFirstResponder:", "mainOutline", "selectLastMessageRow:");  // goes to last message
+  };
+
+  "g" = {
+    "1" = ("goToMailbox:", "983E3D65-1321-4581-A2A0-801C56281095");
+    "2" = ("goToMailbox:", "MAILING_LISTS");
+    "3" = ("goToMailbox:", "UNREAD_AND_FLAGGED");
+
+    "a" = ("goToMailbox:", "ALL_MESSAGES");
+    "i" = ("goToMailbox:", "INBOX");
+    "u" = ("goToMailbox:", "Unread");
+    "m" = "goToMailbox:"; // Opens the “Go to Mailbox...” window
+  };
+
+  "@\U000A" = "send:"; // ⌘+return
+  "@\U000D" = "send:"; // ⌘+enter
+
+
+
+  // References:
+
+  // http://protips.maxmasnick.com/mailmate-keyboard-shortcut-to-archive-all-messages-in-a-thread
+  // "y" = ("selectWithFilter:", "#thread-id = ${#thread-id}", "archive:"); 
+ 
+  // http://manual.mailmate-app.com/custom_key_bindings
+  // http://manual.mailmate-app.com/key_binding_selectors
+  // https://tech-notes.maxmasnick.com/mailmate-my-custom-keybindings
+  // https://brettterpstra.com/projects/keybindings/
+  // https://gist.github.com/zsimic/1367779
+}
+

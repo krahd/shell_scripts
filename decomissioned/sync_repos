@@ -1,0 +1,93 @@
+#!/bin/bash
+
+# syncs all the git repos in the REPOS array
+# if there are merge conflicts, it opens VSCodium for conflict resolution
+# once the conflicts are resolved, it continues with the rebase
+# if there are still conflicts, it exits and asks the user to resolve them
+
+
+# Exit if any command fails
+set -e
+
+# List of directories to sync, each a separate Git repository
+REPOS=(
+"/Users/tom/notes vault/vt"
+"/Users/tom/notes vault/drawings"
+"/Users/tom/notes vault/.obsidian"
+"/Users/tom/notes vault/meta"
+"/Users/tom/notes vault/private"
+"/Users/tom/notes vault/projects/kleguin"
+"/Users/tom/notes vault/projects/themis"
+"/Users/tom/notes vault/projects/vt projects"
+"/Users/tom/notes vault/projects/vertinant"
+"/Users/tom/notes vault/projects/nfts"
+)
+
+# Function to check for and resolve merge conflicts
+resolve_conflicts() {
+  local repo_path="$1"
+  # Check for merge conflicts
+  if git ls-files -u | grep '^'; then
+    echo "Merge conflicts detected in $repo_path."
+    echo "Opening VSCodium for conflict resolution..."
+    # Open VSCodium to resolve conflicts
+    codium --wait
+    # Once VSCodium is closed, check if conflicts are resolved
+    if git ls-files -u | grep '^'; then
+      echo "Conflicts are still present. Please resolve them and continue."
+      exit 1
+    else
+      echo "Conflicts resolved. Continuing with the process."
+    fi
+  fi
+}
+
+# Sync a single git repository
+sync_repo() {
+  echo ""
+  echo ""
+  local repo_path="$1"
+  echo "Synchronizing repository at $repo_path"
+  cd "$repo_path"
+
+  # Check for changes
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "Adding all changes..."
+    git add .
+
+    # Determine the commit message
+    if [ -z "$2" ]; then
+      local commit_message="Auto-commit on $(date +'%Y-%m-%d %H:%M:%S')"
+    else
+      local commit_message="$2"
+    fi
+    echo "Committing as '$commit_message'"
+    git commit -m "$commit_message"
+  else
+    echo "No changes to commit."
+  fi
+
+  # Pull with rebase and handle conflicts
+  echo "Pulling the latest changes from the remote..."
+  if ! git pull --rebase; then
+    resolve_conflicts "$repo_path"
+    # Continue with the rebase after conflicts are resolved
+    git rebase --continue
+  fi
+
+  # Push changes
+  echo "Pushing local commits to the remote..."
+  git push origin main
+
+  echo "Synchronization of repository at $repo_path completed."
+}
+
+# Use the first argument as the commit message, if provided
+COMMIT_MESSAGE="$1"
+
+# Loop over the repositories and sync each one
+for repo in "${REPOS[@]}"; do
+  sync_repo "$repo" "$COMMIT_MESSAGE"
+done
+
+echo "All repositories synchronized."

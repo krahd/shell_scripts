@@ -1,0 +1,98 @@
+#!/bin/bash
+
+# Ensure script exits if any command fails
+set -e
+
+# Default values
+username=$(git config user.name)
+repo_name=$(basename "$PWD")
+silent=false
+move=false
+
+# Help function
+function show_help {
+    echo "Usage: create_repo.sh [options]"
+    echo ""
+    echo "Options:"
+    echo "  --username uname    Specify GitHub username (overrides the one stored in git config)"
+    echo "  --repo reponame     Use 'reponame' as the repository name and create a new directory with this name"
+    echo "  --move              Rename the current directory to 'reponame' instead of creating a new one"
+    echo "  --silent, -s        Suppress all output"
+    echo "  --help, -h          Display this help message and exit"
+    exit 0
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        --username)
+        username="$2"
+        shift # past argument
+        shift # past value
+        ;;
+        --repo)
+        repo_name="$2"
+        shift # past argument
+        shift # past value
+        ;;
+        --move)
+        move=true
+        shift # past argument
+        ;;
+        --silent|-s)
+        silent=true
+        shift # past argument
+        ;;
+        --help|-h)
+        show_help
+        ;;
+        *)
+        shift # past unknown option
+        ;;
+    esac
+done
+
+# Silence output if --silent is set
+if $silent; then
+    exec 1>/dev/null
+fi
+
+# If --repo is set, copy or move the current directory
+if [[ "$repo_name" != "$(basename "$PWD")" ]]; then
+    if $move; then
+        mv "$PWD" "../$repo_name"
+        cd "../$repo_name"
+    else
+        cp -r "$PWD" "../$repo_name"
+        cd "../$repo_name"
+    fi
+fi
+
+# Check if the current directory is already a Git repository
+if [ -d .git ]; then
+    echo "This directory is already a Git repository."
+    exit 1
+fi
+
+# Initialize a new Git repository
+git init
+
+# Add all files to the repository
+git add .
+
+# Commit the added files
+git commit -m "Initial commit"
+
+# Construct the GitHub repository URL
+repo_url="https://github.com/${username}/${repo_name}.git"
+
+# Add the remote GitHub repository
+git remote add origin "$repo_url"
+
+# Push the committed files to the main branch
+git push -u origin main
+
+if ! $silent; then
+    echo "Repository has been created and pushed to GitHub successfully."
+fi

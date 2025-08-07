@@ -1,0 +1,60 @@
+#!/bin/bash
+
+# Script name: gsync
+# Description: A shell script to sync a local directory with Google Drive using rclone
+
+# Check if environment variables are set
+if [ -z "$GDRIVE_REMOTE_BASE_NAME" ] || [ -z "$GDRIVE_LOCAL_BASE_DIR" ]; then
+    echo "Environment variables GDRIVE_REMOTE_BASE_NAME and GDRIVE_LOCAL_BASE_DIR must be set."
+    exit 1
+fi
+
+# Check if the necessary arguments are provided
+if [ $# -ne 2 ]; then
+    echo "Usage: $0 <share_name> {dn|up}"
+    exit 1
+fi
+
+theme=$1
+command=$2
+
+# Set the specific local and remote directories based on the theme
+LOCAL_DIR="$GDRIVE_LOCAL_BASE_DIR/$theme"
+REMOTE_DIR="$GDRIVE_REMOTE_BASE_NAME:/$theme"
+
+# Function to sync down (Google Drive to local)
+sync_down() {
+    echo "Syncing down from Google Drive to local directory..."
+    rclone sync "$REMOTE_DIR" "$LOCAL_DIR"
+    if [ $? -eq 0 ]; then
+        echo "Sync down completed successfully."
+    else
+        echo "Sync down failed."
+    fi
+}
+
+# Function to sync up (local to Google Drive)
+sync_up() {
+    echo "Syncing up from local directory to Google Drive..."
+    rclone sync "$LOCAL_DIR" "$REMOTE_DIR"
+    if [ $? -eq 0 ]; then
+        echo "Sync up completed successfully."
+    else
+        echo "Sync up failed."
+    fi
+}
+
+case $command in
+    dn)
+        sync_down
+        ;;
+    up)
+        sync_up
+        ;;
+    *)
+        echo "Invalid command. Usage: $0 <theme> {dn|up}"
+        exit 1
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,42 @@
+#!/bin/bash
+
+# shows all images and allows you to separate them in one-letter-long folders _By HAND
+
+# Open Preview
+open -a Preview
+
+# Loop through each image file
+for img in *.jpg; do
+  # Open the image file
+  open "$img"
+
+  # Bring terminal to the front
+  osascript -e 'tell application "Warp" to activate'
+  
+  # Wait for the user to press a key
+  read -n 1 -s -r -p ":"
+  
+  # Close the image file
+  osascript -e 'tell application "Preview" to close front document'
+  
+  # If the directory doesn't exist
+  if [[ ! -d "./${REPLY}" ]]; then
+    # Create the directory
+    mkdir "./${REPLY}"
+  fi
+  
+  # Count the number of image files in the directory
+  count=$(ls "./${REPLY}" | wc -l)
+  
+  # Add 1 to the count
+  count=$((count + 1))
+  
+  # Format the number with leading zeros
+  num=$(printf "%05d" $count)
+  
+  # Determine the new name for the image file
+  new_name="${REPLY}_${num}.jpg"
+  
+  # Move the image file to the directory with the new name
+  mv "$img" "./${REPLY}/${new_name}"
+done
