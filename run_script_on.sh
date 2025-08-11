@@ -34,6 +34,7 @@ fi
 
 fail=0
 for arg in "$@"; do
+  echo "------------------------------------------------------------------------"
   echo "→ Running: $script" "$arg"
   "$script" "$arg" || { echo "✗ Failed with argument: $arg" >&2; fail=1; }
 done
