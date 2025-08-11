@@ -39,6 +39,8 @@ if ! git remote get-url origin >/dev/null 2>&1; then
   exit 5
 fi
 
+echo "------------------------------------------------------------------------"
+echo "Syncing"
 echo "→ Repo: $REPO_DIR"
 echo "→ Branch: $BRANCH"
 
