@@ -11,7 +11,16 @@ if [[ "${1:-}" = "-h" || "${1:-}" = "--help" ]]; then
 fi
 
 usage() {
-  echo "Usage: $0 <script> <arg1> [arg2 ...]" >&2
+  cat <<EOF >&2
+Usage: $0 <script> <arg1> [arg2 ...]
+
+Run the specified executable script once for each following argument.
+Each invocation passes a single argument to the target script. Useful for
+batch-running the same script against multiple targets.
+
+Example:
+  $0 ./my-task.sh host1 host2 host3
+EOF
   exit 1
 }
 

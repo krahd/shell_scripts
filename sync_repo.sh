@@ -10,7 +10,19 @@ if [[ "${1:-}" = "-h" || "${1:-}" = "--help" ]]; then
 fi
 
 usage() {
-  echo "Usage: $0 /path/to/repo" >&2
+  cat <<EOF >&2
+Usage: $0 /path/to/repo
+
+Synchronise the current branch of a local git repository with its remote
+named 'origin'. Behavior:
+  - fetches origin
+  - stashes local uncommitted changes (including untracked)
+  - rebase-pulls from origin/<branch>
+  - re-applies stash and commits any resulting changes
+  - pushes the branch to origin
+
+Use this to keep a local repo in sync with its remote in a safe, automated way.
+EOF
   exit 1
 }
 
