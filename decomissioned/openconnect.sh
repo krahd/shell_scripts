@@ -1,5 +1,20 @@
 #!/bin/bash
+# openconnect.sh — BitBar/OpenConnect menu helper to connect/disconnect VPN
+# Usage: openconnect.sh [connect|disconnect] [-h|--help]
+# Notes: Intended for BitBar/SwiftBar plugin usage; also supports CLI connect/disconnect.
+# Prerequisites: openconnect installed (brew install openconnect), sudoers entry for openconnect,
+# and a helper to provide GET_VPN_PASSWORD (see readme). Use with care — this script handles
+# passwords via an external helper and requires appropriate permissions.
 
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+    cat <<EOF
+Usage: $0 [connect|disconnect]
+
+BitBar plugin: run without arguments to show menu status.
+Environment: GET_VPN_PASSWORD should be a command that echoes the VPN password.
+EOF
+    exit 0
+fi
 
 echo "1.1"
 echo "---"

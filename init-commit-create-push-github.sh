@@ -1,13 +1,34 @@
 #!/bin/bash
 
-# Check if a path was provided
-if [ -z "$1" ]; then
+# init-commit-create-push-github.sh — initialise a folder as a git repo and push to GitHub
+# Usage: init-commit-create-push-github.sh <path-to-folder>
+# Requires: `gh` (GitHub CLI) authenticated. May remove an existing .git if you confirm.
+
+usage() {
   echo "Usage: $0 <path-to-folder>"
+  echo
+  echo "Initialise the folder at <path-to-folder> as a git repo, create a GitHub"
+  echo "repository via 'gh', and push the initial commit. Requires 'gh' to be"
+  echo "authenticated."
   exit 1
+}
+
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  usage
+fi
+
+if [ -z "${1:-}" ]; then
+  usage
 fi
 
 TARGET_DIR="$1"
-REPO_NAME=$(basename "$(realpath "$TARGET_DIR")")
+
+# Determine repository name; prefer realpath if available
+if command -v realpath >/dev/null 2>&1; then
+  REPO_NAME=$(basename "$(realpath "$TARGET_DIR")")
+else
+  REPO_NAME=$(basename "$TARGET_DIR")
+fi
 
 # Check if directory exists
 if [ ! -d "$TARGET_DIR" ]; then

@@ -1,14 +1,33 @@
 #!/bin/bash
-# Updates the keybindings
+# update_mailmate_keys.sh — copy MailMate keybindings into user Library
+# Usage: update_mailmate_keys.sh [source-file]
+# Default: ./tom.plist
+# Notes: Backs up existing tom.plist into KeyBindings/backups with a timestamp.
+
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  cat <<EOF
+Usage: $0 [source-file]
+
+Copy keybinding file into MailMate KeyBindings (backups original).
+Default source-file: ./tom.plist
+EOF
+  exit 0
+fi
 
 # Define source and destination paths
-SOURCE_FILE="./tom.plist"
+SOURCE_FILE="${1:-./tom.plist}"
 DEST_DIR="$HOME/Library/Application Support/MailMate/Resources/KeyBindings"
 BACKUP_DIR="$DEST_DIR/backups"
 DEST_FILE="$DEST_DIR/tom.plist"
 
 echo "Copying $SOURCE_FILE to $DEST_FILE"
-echo 
+echo
+
+# Ensure source exists before proceeding
+if [ ! -f "$SOURCE_FILE" ]; then
+  echo "Error: source file '$SOURCE_FILE' not found." >&2
+  exit 1
+fi
 
 # Create the destination and backup directories if they don't exist
 mkdir -p "$DEST_DIR"

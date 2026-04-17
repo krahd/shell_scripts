@@ -4,6 +4,11 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" = "-h" || "${1:-}" = "--help" ]]; then
+  echo "Usage: $0 /path/to/repo"
+  exit 0
+fi
+
 usage() {
   echo "Usage: $0 /path/to/repo" >&2
   exit 1

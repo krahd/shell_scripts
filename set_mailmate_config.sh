@@ -1,5 +1,20 @@
 #!/bin/bash
 
+# set_mailmate_config.sh — apply preferred MailMate defaults and helper symlinks
+# Usage: set_mailmate_config.sh [-h|--help]
+# Warning: modifies user defaults for MailMate. Run only if you understand the changes.
+
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+	cat <<EOF
+Usage: $0 [-h|--help]
+
+Apply preferred MailMate defaults and create helper symlinks. This script writes
+to the com.freron.MailMate domain using 'defaults write' and may overwrite
+existing settings.
+EOF
+	exit 0
+fi
+
 # MailMate hidden settings
 # tom
 # 6 Aug 2025

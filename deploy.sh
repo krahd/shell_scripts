@@ -1,6 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+    cat <<EOF
+Usage: $0
+
+Create a dated zip backup of ./bin into ./backups and copy all *.sh
+from the repo root into ./bin, setting the executable bit.
+
+Run this from the repository root. This will overwrite files in ./bin.
+EOF
+    exit 0
+fi
+
 mkdir -p ./backups
 mkdir -p ./bin
 

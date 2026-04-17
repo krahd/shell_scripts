@@ -1,9 +1,14 @@
 #!/usr/bin/env zsh
+
 # Run a given executable script once per subsequent argument.
-# Usage:
-#   run_script_on.sh <script> <arg1> [arg2 ...]
+# Usage: run_script_on.sh <script> <arg1> [arg2 ...]
 
 set -u
+
+if [[ "${1:-}" = "-h" || "${1:-}" = "--help" ]]; then
+  echo "Usage: $0 <script> <arg1> [arg2 ...]"
+  exit 0
+fi
 
 usage() {
   echo "Usage: $0 <script> <arg1> [arg2 ...]" >&2
