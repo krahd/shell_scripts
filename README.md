@@ -1,83 +1,107 @@
-Overview
---------
-Small, personal shell utilities and helpers for macOS. Some scripts are read-only inspectors; others perform file changes or network actions — read the safety notes before running anything.
+## shell_scripts
 
-Prerequisites
--------------
-- macOS (tested on recent versions)
-- Homebrew (recommended) and these tools for some scripts:
-	- `git`, `gh` (GitHub CLI), `ffmpeg`, `ffprobe`, `python3`, `zip`, `cliclick`, `openconnect`
+Personal macOS shell utilities and helpers — a small collection of single-purpose scripts
+used on my machines. Some scripts are read-only inspectors; others perform file operations
+or interact with the network. Read the Safety notes before running anything.
 
-Install common tools via Homebrew:
+### Quick start
+
+1. Clone the repo and change into it:
+
+```bash
+git clone <your-repo-url>
+cd shell_scripts
+```
+
+2. Install common prerequisites (Homebrew recommended):
 
 ```bash
 brew install git gh ffmpeg python3 zip cliclick openconnect
 ```
 
-Repository layout
------------------
-- Root scripts (examples): `brew_backup.sh`, `deploy.sh`, `init-commit-create-push-github.sh`, `join_videos.sh`, `run_script_on.sh`, `show_mailmate_config.sh`, `set_mailmate_config.sh`, `update_mailmate_keys.sh`, `sync_repo.sh`
-- `bin/`: executable copies of many scripts (duplicates)
-- `backups/`: helper scripts and historical backups (e.g., `backups/mailmate-config-backup.sh`)
-- `decomissioned/`: retired or special-purpose utilities
-
-How to enable scripts
----------------------
-Make scripts executable before running:
+3. Make scripts executable and deploy them to `bin/`:
 
 ```bash
-chmod +x ./brew_backup.sh ./deploy.sh ./init-commit-create-push-github.sh ./join_videos.sh \
-	./run_script_on.sh ./show_mailmate_config.sh ./set_mailmate_config.sh ./update_mailmate_keys.sh ./sync_repo.sh
+chmod +x ./*.sh
+./deploy.sh
 ```
 
-Per-script summary (examples)
------------------------------
-- `brew_backup.sh` — generates a `Brewfile` for your installed Homebrew packages:
+### Requirements
+
+- macOS (tested on recent versions)
+- Homebrew (recommended)
+- Tools used by various scripts: `git`, `gh`, `ffmpeg`, `ffprobe`, `python3`, `zip`, `cliclick`, `openconnect`
+
+### Repository layout
+
+- Root scripts: `brew_backup.sh`, `deploy.sh`, `init-commit-create-push-github.sh`, `join_videos.sh`, `run_script_on.sh`, `show_mailmate_config.sh`, `set_mailmate_config.sh`, `update_mailmate_keys.sh`, `sync_repo.sh`
+- `bin/`: deployed, executable copies intended to be on your PATH (populated by `deploy.sh`)
+- `backups/`: archives and helper scripts (e.g. MailMate config backups)
+- `decomissioned/`: retired or special-purpose utilities
+
+### Common usage examples
+
+- Generate a Brewfile of installed Homebrew packages:
 
 ```bash
 ./brew_backup.sh
 ```
 
-- `deploy.sh` — creates a dated zip backup of `./bin` to `./backups` and copies `*.sh` into `./bin` (makes them executable). Run from repo root.
+- Deploy scripts to `bin/` and create a dated backup of the previous `bin/`:
 
 ```bash
 ./deploy.sh
 ```
 
-- `init-commit-create-push-github.sh` — initialize a local folder as a git repo and create/push to a new GitHub repo (requires `gh` authentication):
+- Initialize a folder as a git repo and create/push a GitHub repo (requires `gh` auth):
 
 ```bash
 ./init-commit-create-push-github.sh /path/to/project
 ```
 
-- `join_videos.sh` — zsh script that concatenates multiple videos using `ffmpeg` (requires `ffmpeg`/`ffprobe`):
+- Concatenate videos using `ffmpeg`:
 
 ```bash
 ./join_videos.sh -s 0.5 '*.mp4' output.mp4
 ```
 
-- MailMate helpers: `show_mailmate_config.sh`, `set_mailmate_config.sh`, `update_mailmate_keys.sh`, `backups/mailmate-config-backup.sh` — inspect/modify MailMate defaults and keybindings (macOS `defaults` used).
+- MailMate helpers (inspect and modify defaults/keybindings):
 
-- `sync_repo.sh` — fetch, rebase-pull, stash/reapply, and push; useful for syncing a local repo with `origin`.
+```bash
+./show_mailmate_config.sh
+./set_mailmate_config.sh
+./update_mailmate_keys.sh
+```
 
-Safety notes
-------------
-- `deploy.sh` performs destructive operations on `./bin` (deletes/replaces files). Keep backups and review before running.
-- `init-commit-create-push-github.sh` may remove an existing `.git` directory when re-initializing — use with caution.
-- `set_mailmate_config.sh` and `update_mailmate_keys.sh` modify MailMate defaults and keybindings; run only if you understand the changes.
-- `decomissioned/openconnect.sh` references external helpers and stores passwords; review securely before use.
+- Sync a repo with remote `origin` (fetch, rebase, push):
 
-Recommended fixes applied
-------------------------
-- Fixed `deploy.sh` shebang placement and added error-handling (`set -euo pipefail`).
-- Fixed `update_mailmate_keys.sh` destination path quoting.
-- Added help and a basic Homebrew check to `brew_backup.sh`.
+```bash
+./sync_repo.sh
+```
 
-Contributing
-------------
-If you'd like to tidy the repo further, consider keeping a single canonical copy of each script (remove duplicates from `bin/`), add `--help` to other scripts, and add tests for destructive operations.
+### `bin/` and deployment
 
----
+`bin/` is the on-machine deploy target. Use `deploy.sh` from the repository root to copy
+scripts into `bin/` and make them executable. `bin/` is intentionally kept populated and
+should not be deduplicated or removed by automated tidy tasks.
 
-If you want me to push these changes to a branch and open a PR, tell me and I'll proceed.
+### Safety notes
+
+- `deploy.sh` can overwrite or delete files in `./bin`; keep backups and inspect before running.
+- `init-commit-create-push-github.sh` may reinitialize repositories and affect existing `.git` data.
+- `set_mailmate_config.sh` and `update_mailmate_keys.sh` change MailMate defaults/keybindings using `defaults`.
+- Scripts in `decomissioned/` may reference external helpers or store sensitive data; review carefully.
+
+### Notes & recent fixes
+
+- Fixed `deploy.sh` shebang placement and added safer error handling (`set -euo pipefail`).
+- Fixed quoting in `update_mailmate_keys.sh`.
+- Added `--help` and a Homebrew check to `brew_backup.sh`.
+
+### Contributing
+
+- Add `--help` to scripts that lack it and prefer non-destructive defaults for quick testing.
+- To update deployed executables, run `./deploy.sh` from the repo root.
+
+
 
