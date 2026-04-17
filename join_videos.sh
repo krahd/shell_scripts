@@ -39,6 +39,7 @@ output="joined.mp4"
 output_from_option=""
 separation="0"
 pattern=""
+force=0
 
 while (( $# > 0 )); do
   case "$1" in
@@ -61,6 +62,10 @@ while (( $# > 0 )); do
       fi
       output_from_option="$2"
       shift 2
+      ;;
+    -f|--force)
+      force=1
+      shift
       ;;
     --)
       shift
@@ -158,6 +163,11 @@ fi
 echo "Using output format: ${width}x${height} @ ${fps} fps"
 echo "Separation: ${separation}s"
 echo "Output: $output"
+
+if [[ -e "$output" && "$force" != "1" ]]; then
+  echo "Error: output '$output' already exists. Use -f or --force to overwrite." >&2
+  exit 1
+fi
 
 i=1
 total=${#files}

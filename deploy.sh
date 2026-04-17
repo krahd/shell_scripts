@@ -1,20 +1,39 @@
 #!/bin/bash
 set -euo pipefail
 
+# Default to non-destructive mode. Pass --apply or -a to perform changes.
+APPLY=0
+if [ "${1:-}" = "--apply" ] || [ "${1:-}" = "-a" ]; then
+    APPLY=1
+    shift
+fi
+
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-    cat <<EOF
-Usage: $0
+    cat <<'EOF'
+Usage: $0 [--apply]
 
 Create a dated zip backup of ./bin into ./backups and copy all *.sh
 from the repo root into ./bin, setting the executable bit.
 
-Run this from the repository root. This will overwrite files in ./bin.
+Run this from the repository root.
+Default: dry-run (no destructive changes). To perform the actions, pass
+`--apply` or `-a`. Note: with --apply this WILL overwrite files in ./bin.
 EOF
     exit 0
 fi
 
-mkdir -p ./backups
-mkdir -p ./bin
+run_cmd() {
+    if [ "$APPLY" -eq 1 ]; then
+        "$@"
+    else
+        printf "[DRY-RUN]"
+        for a in "$@"; do printf " %s" "$a"; done
+        echo
+    fi
+}
+
+run_cmd mkdir -p ./backups
+run_cmd mkdir -p ./bin
 
 backup_date=$(date +%Y-%m-%d)
 backup_file="./backups/bin-backup-$backup_date.zip"
@@ -26,12 +45,12 @@ while [ -e "$backup_file" ]; do
 done
 
 if [ -d ./bin ]; then
-    zip -r "$backup_file" ./bin > /dev/null
+    run_cmd zip -r "$backup_file" ./bin
 fi
 
 # Remove existing files in ./bin (ignore errors if none)
-rm -f ./bin/* || true
+run_cmd rm -f ./bin/* || true
 
 # Copy shell scripts into ./bin and make them executable
-cp ./*.sh ./bin
-chmod +x ./bin/*.sh
+run_cmd cp ./*.sh ./bin
+run_cmd chmod +x ./bin/*.sh

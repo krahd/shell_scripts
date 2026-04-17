@@ -4,8 +4,15 @@
 
 set -euo pipefail
 
+# Default to non-destructive mode. Pass --apply or -a to perform changes.
+APPLY=0
+if [[ "${1:-}" = "--apply" || "${1:-}" = "-a" ]]; then
+  APPLY=1
+  shift
+fi
+
 if [[ "${1:-}" = "-h" || "${1:-}" = "--help" ]]; then
-  echo "Usage: $0 /path/to/repo"
+  echo "Usage: $0 [--apply] /path/to/repo"
   exit 0
 fi
 
@@ -62,28 +69,38 @@ echo "→ Repo: $REPO_DIR"
 echo "→ Branch: $BRANCH"
 
 echo "• Fetching origin…" 
-git fetch --all --prune
+run_cmd() {
+  if [[ "$APPLY" -eq 1 ]]; then
+    "$@"
+  else
+    printf "[DRY-RUN]"
+    for a in "$@"; do printf " %s" "$a"; done
+    echo
+  fi
+}
+
+run_cmd git fetch --all --prune
 
 # If working tree dirty, stash (incl. untracked) to avoid pull/rebase failures
 stash_ref=""
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "• Stashing local changes…"
-  git stash push -u -m "sync_repo.sh auto-stash $(date -Iseconds)"
+  run_cmd git stash push -u -m "sync_repo.sh auto-stash $(date -Iseconds)"
   # Capture the top stash ref (e.g., stash@{0})
   stash_ref="$(git stash list | head -n1 | cut -d: -f1)"
 fi
 
 # Rebase onto remote to keep linear history
 echo "• Rebase-pulling from origin/$BRANCH…"
-git pull --rebase origin "$BRANCH"
+run_cmd git pull --rebase origin "$BRANCH"
 
 # Re-apply stash if we created one
 if [[ -n "$stash_ref" ]]; then
   echo "• Re-applying stashed changes…"
   # Use apply so the stash is kept if conflicts occur
-  if git stash apply --index "$stash_ref"; then
+  if run_cmd git stash apply --index "$stash_ref"; then
     # If apply succeeded, drop the stash
-    git stash drop "$stash_ref" >/dev/null || true
+    run_cmd git stash drop "$stash_ref" >/dev/null || true
   else
     echo "✗ Conflicts while applying stash. Resolve conflicts, then commit/push manually." >&2
     popd >/dev/null
@@ -92,21 +109,26 @@ if [[ -n "$stash_ref" ]]; then
 fi
 
 # Commit only if there are staged/unstaged changes
+
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "• Committing local changes…"
-  git add -A
+  run_cmd git add -A
   # Only commit if something actually staged
-  if ! git diff --cached --quiet; then
-    git commit -m "sync: $(date -Iseconds)"
+  if [[ "$APPLY" -eq 1 ]]; then
+    if ! git diff --cached --quiet; then
+      git commit -m "sync: $(date -Iseconds)"
+    else
+      echo "• Nothing staged; skipping commit."
+    fi
   else
-    echo "• Nothing staged; skipping commit."
+    echo "[DRY-RUN] would check staged changes and commit if present"
   fi
 else
   echo "• No local changes to commit."
 fi
 
 echo "• Pushing to origin/$BRANCH…"
-git push origin "$BRANCH"
+run_cmd git push origin "$BRANCH"
 
 echo "✓ Sync complete."
 popd >/dev/null
