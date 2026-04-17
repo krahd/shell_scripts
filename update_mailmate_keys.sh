@@ -3,7 +3,7 @@
 
 # Define source and destination paths
 SOURCE_FILE="./tom.plist"
-DEST_DIR="$HOME/Library/Application\ Support/MailMate/Resources/KeyBindings"
+DEST_DIR="$HOME/Library/Application Support/MailMate/Resources/KeyBindings"
 BACKUP_DIR="$DEST_DIR/backups"
 DEST_FILE="$DEST_DIR/tom.plist"
 
