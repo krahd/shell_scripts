@@ -13,13 +13,13 @@ git clone <your-repo-url>
 cd shell_scripts
 ```
 
-1. Install common prerequisites (Homebrew recommended):
+2. Install common prerequisites (Homebrew recommended):
 
 ```bash
 brew install git gh ffmpeg python3 zip cliclick openconnect
 ```
 
-1. Make scripts executable and deploy them to `bin/`:
+3. Make scripts executable and deploy them to `bin/`:
 
 ```bash
 chmod +x ./*.sh
