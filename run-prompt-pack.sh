@@ -17,15 +17,17 @@ AUTO_YES=0
 
 MODEL=""
 VARIANT="xhigh"
-VERSION="0.1.2"
+VERSION="0.3.0"
 DEFAULT_MODEL_CODEX="gpt-5.4-mini"
 DEFAULT_MODEL_OPENCODE="openai/gpt-5.4-mini"
 DEFAULT_MODEL_CLAUDE="sonnet"
 
 usage() {
   cat <<USAGE
+
 Usage:
   run-prompt-pack.sh [OPTIONS]
+  
 Version: $VERSION
 Default codex model: $DEFAULT_MODEL_CODEX
 Default opencode model: $DEFAULT_MODEL_OPENCODE
