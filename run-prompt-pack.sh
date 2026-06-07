@@ -17,10 +17,11 @@ AUTO_YES=0
 
 MODEL=""
 VARIANT="xhigh"
-VERSION="0.3.1"
+VERSION="0.3.2"
 DEFAULT_MODEL_CODEX="gpt-5.4-mini"
 DEFAULT_MODEL_OPENCODE="openai/gpt-5.4-mini"
 DEFAULT_MODEL_CLAUDE="sonnet"
+REPO_ENV_BIN=""
 
 usage() {
   cat <<USAGE
@@ -85,8 +86,8 @@ Examples:
   run-prompt-pack.sh --agent claude --model sonnet --variant xhigh
 
 Environment:
-  TEST_CMD                Test command. Default: python3 -m pytest -q when pytest is importable,
-                          otherwise pytest -q when pytest is on PATH.
+  TEST_CMD                Test command. Default: repo environment python -m pytest -q.
+                          Global pytest is never used as a fallback.
 
 Repo usage:
   Run this script from the repo root. If you want to run it from elsewhere,
@@ -150,22 +151,100 @@ resolve_repo_path() {
   esac
 }
 
-resolve_default_test_cmd() {
+shell_quote() {
+  printf '%q' "$1"
+}
+
+resolve_repo_env_bin() {
   local candidate
 
-  for candidate in python3 python; do
-    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -m pytest --version >/dev/null 2>&1; then
-      printf '%s -m pytest -q\n' "$(command -v "$candidate")"
+  if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+    case "$VIRTUAL_ENV" in
+      "$REPO_DIR"|"$REPO_DIR"/*)
+        candidate="$VIRTUAL_ENV/bin"
+        if [[ -d "$candidate" ]]; then
+          printf '%s\n' "$candidate"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+
+  for candidate in "$REPO_DIR/.venv/bin" "$REPO_DIR/venv/bin" "$REPO_DIR/env/bin"; do
+    if [[ -x "$candidate/python3" || -x "$candidate/python" ]]; then
+      printf '%s\n' "$candidate"
       return 0
     fi
   done
 
-  if command -v pytest >/dev/null 2>&1; then
-    printf '%s -q\n' "$(command -v pytest)"
+  return 1
+}
+
+resolve_default_test_cmd() {
+  local python_path
+
+  if [[ -n "$REPO_ENV_BIN" ]]; then
+    for python_path in "$REPO_ENV_BIN/python3" "$REPO_ENV_BIN/python"; do
+      if [[ -x "$python_path" ]] && "$python_path" -m pytest --version >/dev/null 2>&1; then
+        printf '%s -m pytest -q\n' "$(shell_quote "$python_path")"
+        return 0
+      fi
+    done
+  fi
+
+  if [[ -f "$REPO_DIR/uv.lock" ]] && command -v uv >/dev/null 2>&1; then
+    printf 'uv run python -m pytest -q\n'
     return 0
   fi
 
+  if [[ -f "$REPO_DIR/poetry.lock" ]] && command -v poetry >/dev/null 2>&1; then
+    printf 'poetry run python -m pytest -q\n'
+    return 0
+  fi
+
+  if [[ -f "$REPO_DIR/pyproject.toml" ]]; then
+    if command -v uv >/dev/null 2>&1; then
+      printf 'uv run python -m pytest -q\n'
+      return 0
+    fi
+
+    if command -v poetry >/dev/null 2>&1; then
+      printf 'poetry run python -m pytest -q\n'
+      return 0
+    fi
+  fi
+
   return 1
+}
+
+run_with_repo_env() {
+  if [[ -n "$REPO_ENV_BIN" ]]; then
+    PATH="$REPO_ENV_BIN:$PATH" "$@"
+  else
+    "$@"
+  fi
+}
+
+command_exists_with_repo_env() {
+  if [[ -n "$REPO_ENV_BIN" ]]; then
+    PATH="$REPO_ENV_BIN:$PATH" command -v "$1" >/dev/null 2>&1
+  else
+    command -v "$1" >/dev/null 2>&1
+  fi
+}
+
+run_repo_shell() {
+  local command_text="$1"
+  local repo_dir_shell_escaped
+  repo_dir_shell_escaped="$(shell_quote "$REPO_DIR")"
+
+  if [[ -n "$REPO_ENV_BIN" ]]; then
+    local path_shell_escaped
+    path_shell_escaped="$(shell_quote "$REPO_ENV_BIN:$PATH")"
+    bash -lc "cd $repo_dir_shell_escaped && export PATH=$path_shell_escaped && $command_text"
+  else
+    bash -lc "cd $repo_dir_shell_escaped && $command_text"
+  fi
 }
 
 normalise_num() {
@@ -383,7 +462,11 @@ fi
 PROMPT_DIR="$(resolve_repo_path "$PROMPT_DIR")"
 [[ -d "$PROMPT_DIR" ]] || fail "Prompt directory not found: $PROMPT_DIR"
 
-if ! command -v "$AGENT" >/dev/null 2>&1; then
+if ! REPO_ENV_BIN="$(resolve_repo_env_bin)"; then
+  REPO_ENV_BIN=""
+fi
+
+if ! command_exists_with_repo_env "$AGENT"; then
   fail "Agent command not found in PATH: $AGENT"
 fi
 
@@ -427,6 +510,7 @@ echo "Repo root: $REPO_DIR"
 echo "Agent: $AGENT"
 echo "Model: $MODEL"
 echo "Variant/effort: $VARIANT"
+echo "Repo environment: ${REPO_ENV_BIN:-none detected}"
 echo "Automatic: $AUTOMATIC"
 echo "Run tests: $RUN_TESTS"
 echo "Commit changes: $COMMIT_CHANGES"
@@ -447,13 +531,13 @@ run_prompt() {
   case "$AGENT" in
     codex)
       if [[ "$AUTOMATIC" -eq 1 ]]; then
-        codex exec \
+        run_with_repo_env codex exec \
           --cd "$REPO_DIR" \
           --model "$MODEL" \
           --dangerously-bypass-approvals-and-sandbox \
           "$prompt_text"
       else
-        codex \
+        run_with_repo_env codex \
           --cd "$REPO_DIR" \
           --model "$MODEL" \
           --sandbox workspace-write \
@@ -464,14 +548,14 @@ run_prompt() {
 
     opencode)
       if [[ "$AUTOMATIC" -eq 1 ]]; then
-        opencode run \
+        run_with_repo_env opencode run \
           --dir "$REPO_DIR" \
           --model "$MODEL" \
           --variant "$VARIANT" \
           --dangerously-skip-permissions \
           "$prompt_text"
       else
-        opencode run \
+        run_with_repo_env opencode run \
           --dir "$REPO_DIR" \
           --model "$MODEL" \
           --variant "$VARIANT" \
@@ -481,13 +565,13 @@ run_prompt() {
 
     claude)
       if [[ "$AUTOMATIC" -eq 1 ]]; then
-        claude -p \
+        run_with_repo_env claude -p \
           --model "$MODEL" \
           --effort "$VARIANT" \
           --dangerously-skip-permissions \
           "$prompt_text"
       else
-        claude \
+        run_with_repo_env claude \
           --model "$MODEL" \
           --effort "$VARIANT" \
           --permission-mode default \
@@ -522,8 +606,7 @@ for prompt_file in "${SELECTED_PROMPTS[@]}"; do
 
   if [[ "$RUN_TESTS" -eq 1 ]]; then
     echo "Running tests: $TEST_CMD"
-    repo_dir_shell_escaped="$(printf '%q' "$REPO_DIR")"
-    bash -lc "cd $repo_dir_shell_escaped && $TEST_CMD"
+    run_repo_shell "$TEST_CMD"
     echo
   fi
 
