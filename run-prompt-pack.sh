@@ -4,18 +4,19 @@
 # the shebang selects Bash even if your interactive shell is zsh.
 set -euo pipefail
 
-PROMPT_DIR="audit-prompts"
+PROMPT_DIR="ignore/prompts"
+REPO_DIR=""
 AGENT="codex"
 FIRST=""
 LAST=""
-NOTIFY=0
+NOTIFY=1
 RUN_TESTS=1
 COMMIT_CHANGES=1
 AUTOMATIC=0
+AUTO_YES=0
 
 MODEL=""
 VARIANT="xhigh"
-TEST_CMD="${TEST_CMD:-python -m pytest -q}"
 
 usage() {
   cat <<'USAGE'
@@ -26,7 +27,10 @@ Runs numbered Markdown prompt files one at a time. Each selected prompt must be
 named NN-something.md, for example 01-fix-ci.md. Files named 00-*.md are skipped.
 
 Options:
-  -d, --prompt-dir DIR     Directory containing prompt files. Default: audit-prompts
+  -r, --repo DIR           Repository root to operate on. Required when running
+                           from outside the repo root.
+  -d, --prompt-dir DIR     Directory containing prompt files. Default:
+                           ignore/prompts (relative to the repo root)
   -a, --agent AGENT        Agent to use: codex, opencode, claude. Default: codex
   -f, --first NUM          First prompt number to run, e.g. 01. Optional.
       --start NUM          Alias for --first
@@ -34,9 +38,14 @@ Options:
       --finish NUM         Alias for --last
   -m, --model MODEL        Override model name
       --variant VALUE      Reasoning/variant/effort value. Default: xhigh
-      --automatic          Fully unattended mode where supported
+      --automatic          Fully unattended mode where supported. Prints a loud
+                           warning and asks for confirmation unless --yes is
+                           passed.
       --AUTOMATIC          Alias for --automatic
-  -n, --notify             Show a macOS notification when finished or failed
+  -Y, --yes                Skip the automatic-mode confirmation prompt.
+      --yes                Alias for --yes
+  -n, --notify             Show a macOS notification when finished or failed.
+                           Enabled by default.
       --no-tests           Do not run tests after each prompt
       --no-commit          Do not commit after each prompt
   -h, --help               Show this help
@@ -54,6 +63,7 @@ Automatic behaviour:
 
 Examples:
   run-prompt-pack.sh
+  run-prompt-pack.sh --repo /home/dev/my-repo --first 01 --last 02
   run-prompt-pack.sh --prompt-dir ../squarespace-to-astro-repair-prompts-v2
   run-prompt-pack.sh --first 01 --last 02
   run-prompt-pack.sh --start=02 --finish=04
@@ -62,13 +72,67 @@ Examples:
   run-prompt-pack.sh --agent claude --model sonnet --variant xhigh
 
 Environment:
-  TEST_CMD                Test command. Default: python -m pytest -q
+  TEST_CMD                Test command. Default: python3 -m pytest -q (falls back to python if needed)
+
+Repo usage:
+  Run this script from the repo root. If you want to run it from elsewhere,
+  pass --repo /path/to/repo, for example --repo /home/dev/my-repo.
+
+Disclaimer:
+  This script is provided as-is and can break things up, especially with
+  --automatic. Review the selected prompts and repository before continuing.
 USAGE
 }
 
 fail() {
   echo "Error: $*" >&2
   exit 1
+}
+
+warn_automatic_mode() {
+  cat >&2 <<'EOF'
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: --automatic is enabled.
+This script is provided as-is and can break things up, especially with
+--automatic.
+Proceed only if you understand the repo state and the changes this may make.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+EOF
+}
+
+confirm_automatic_mode() {
+  warn_automatic_mode
+
+  if [[ "$AUTO_YES" -eq 1 ]]; then
+    return 0
+  fi
+
+  if [[ ! -t 0 ]]; then
+    fail "Automatic mode requires confirmation on an interactive terminal. Re-run with --yes/-Y to bypass the prompt."
+  fi
+
+  local automatic_reply
+  read -r -p "Continue with --automatic? [y/N] " automatic_reply
+  case "$automatic_reply" in
+    y|Y|yes|YES)
+      ;;
+    *)
+      fail "Automatic mode cancelled."
+      ;;
+  esac
+}
+
+resolve_repo_path() {
+  local path="$1"
+
+  case "$path" in
+    /*)
+      printf '%s\n' "$path"
+      ;;
+    *)
+      printf '%s/%s\n' "$REPO_DIR" "$path"
+      ;;
+  esac
 }
 
 normalise_num() {
@@ -149,6 +213,16 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
 
+    -r|--repo)
+      [[ $# -ge 2 ]] || fail "$1 requires a value"
+      REPO_DIR="$2"
+      shift 2
+      ;;
+    --repo=*)
+      REPO_DIR="${1#*=}"
+      shift
+      ;;
+
     -f|--first|--start)
       [[ $# -ge 2 ]] || fail "$1 requires a value"
       FIRST="$(normalise_num "$2")"
@@ -191,6 +265,11 @@ while [[ $# -gt 0 ]]; do
 
     --automatic|--AUTOMATIC)
       AUTOMATIC=1
+      shift
+      ;;
+
+    -Y|--yes)
+      AUTO_YES=1
       shift
       ;;
 
@@ -248,20 +327,46 @@ if [[ -z "$MODEL" ]]; then
   esac
 fi
 
-[[ -d "$PROMPT_DIR" ]] || fail "Prompt directory not found: $PROMPT_DIR"
+if [[ -n "$REPO_DIR" ]]; then
+  repo_arg="$REPO_DIR"
+  [[ -d "$repo_arg" ]] || fail "Repo directory not found: $repo_arg"
 
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  fail "Run this from inside the repository."
+  if ! REPO_DIR="$(git -C "$repo_arg" rev-parse --show-toplevel 2>/dev/null)"; then
+    fail "Not a git repository: $repo_arg"
+  fi
+else
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    fail "Run this from the repo root, or pass --repo /path/to/repo."
+  fi
+
+  REPO_DIR="$(git rev-parse --show-toplevel)"
+
+  if [[ "$(pwd -P)" != "$REPO_DIR" ]]; then
+    fail "Run this from the repo root ($REPO_DIR), or pass --repo /path/to/repo."
+  fi
 fi
+
+PROMPT_DIR="$(resolve_repo_path "$PROMPT_DIR")"
+[[ -d "$PROMPT_DIR" ]] || fail "Prompt directory not found: $PROMPT_DIR"
 
 if ! command -v "$AGENT" >/dev/null 2>&1; then
   fail "Agent command not found in PATH: $AGENT"
 fi
 
-if [[ -n "$(git status --porcelain)" ]]; then
+if [[ -n "$(git -C "$REPO_DIR" status --porcelain)" ]]; then
   echo "Working tree is not clean:"
-  git status --short
+  git -C "$REPO_DIR" status --short
   fail "Commit or stash changes before running."
+fi
+
+if [[ "$RUN_TESTS" -eq 1 && -z "${TEST_CMD:-}" ]]; then
+  if command -v python3 >/dev/null 2>&1; then
+    TEST_CMD="$(command -v python3) -m pytest -q"
+  elif command -v python >/dev/null 2>&1; then
+    TEST_CMD="$(command -v python) -m pytest -q"
+  else
+    fail "No Python interpreter found for tests. Install python3 or set TEST_CMD."
+  fi
 fi
 
 SELECTED_PROMPTS=()
@@ -290,6 +395,7 @@ if [[ "${#SELECTED_PROMPTS[@]}" -eq 0 ]]; then
 fi
 
 echo "Prompt directory: $PROMPT_DIR"
+echo "Repo root: $REPO_DIR"
 echo "Agent: $AGENT"
 echo "Model: $MODEL"
 echo "Variant/effort: $VARIANT"
@@ -314,13 +420,13 @@ run_prompt() {
     codex)
       if [[ "$AUTOMATIC" -eq 1 ]]; then
         codex exec \
-          --cd "$PWD" \
+          --cd "$REPO_DIR" \
           --model "$MODEL" \
           --dangerously-bypass-approvals-and-sandbox \
           "$prompt_text"
       else
         codex \
-          --cd "$PWD" \
+          --cd "$REPO_DIR" \
           --model "$MODEL" \
           --sandbox workspace-write \
           --ask-for-approval on-request \
@@ -331,14 +437,14 @@ run_prompt() {
     opencode)
       if [[ "$AUTOMATIC" -eq 1 ]]; then
         opencode run \
-          --dir "$PWD" \
+          --dir "$REPO_DIR" \
           --model "$MODEL" \
           --variant "$VARIANT" \
           --dangerously-skip-permissions \
           "$prompt_text"
       else
         opencode run \
-          --dir "$PWD" \
+          --dir "$REPO_DIR" \
           --model "$MODEL" \
           --variant "$VARIANT" \
           "$prompt_text"
@@ -363,6 +469,10 @@ run_prompt() {
   esac
 }
 
+if [[ "$AUTOMATIC" -eq 1 ]]; then
+  confirm_automatic_mode
+fi
+
 for prompt_file in "${SELECTED_PROMPTS[@]}"; do
   name="$(basename "$prompt_file" .md)"
 
@@ -379,19 +489,20 @@ for prompt_file in "${SELECTED_PROMPTS[@]}"; do
   echo
 
   echo "Current git status:"
-  git status --short
+  git -C "$REPO_DIR" status --short
   echo
 
   if [[ "$RUN_TESTS" -eq 1 ]]; then
     echo "Running tests: $TEST_CMD"
-    bash -lc "$TEST_CMD"
+    repo_dir_shell_escaped="$(printf '%q' "$REPO_DIR")"
+    bash -lc "cd $repo_dir_shell_escaped && $TEST_CMD"
     echo
   fi
 
   if [[ "$COMMIT_CHANGES" -eq 1 ]]; then
-    if [[ -n "$(git status --porcelain)" ]]; then
-      git add -A
-      git commit -m "Apply $name"
+    if [[ -n "$(git -C "$REPO_DIR" status --porcelain)" ]]; then
+      git -C "$REPO_DIR" add -A
+      git -C "$REPO_DIR" commit -m "Apply $name"
     else
       echo "No changes to commit for $name."
     fi
@@ -402,4 +513,4 @@ done
 
 echo
 echo "All selected prompts completed."
-git status --short
+git -C "$REPO_DIR" status --short
