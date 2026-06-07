@@ -17,7 +17,7 @@ AUTO_YES=0
 
 MODEL=""
 VARIANT="xhigh"
-VERSION="0.3.0"
+VERSION="0.3.1"
 DEFAULT_MODEL_CODEX="gpt-5.4-mini"
 DEFAULT_MODEL_OPENCODE="openai/gpt-5.4-mini"
 DEFAULT_MODEL_CLAUDE="sonnet"
@@ -27,7 +27,7 @@ usage() {
 
 Usage:
   run-prompt-pack.sh [OPTIONS]
-  
+
 Version: $VERSION
 Default codex model: $DEFAULT_MODEL_CODEX
 Default opencode model: $DEFAULT_MODEL_OPENCODE
@@ -85,7 +85,8 @@ Examples:
   run-prompt-pack.sh --agent claude --model sonnet --variant xhigh
 
 Environment:
-  TEST_CMD                Test command. Default: python3 -m pytest -q (falls back to python if needed)
+  TEST_CMD                Test command. Default: python3 -m pytest -q when pytest is importable,
+                          otherwise pytest -q when pytest is on PATH.
 
 Repo usage:
   Run this script from the repo root. If you want to run it from elsewhere,
@@ -94,6 +95,7 @@ Repo usage:
 Disclaimer:
   This script is provided as-is and can break things up, especially with
   --automatic. Review the selected prompts and repository before continuing.
+
 USAGE
 }
 
@@ -146,6 +148,24 @@ resolve_repo_path() {
       printf '%s/%s\n' "$REPO_DIR" "$path"
       ;;
   esac
+}
+
+resolve_default_test_cmd() {
+  local candidate
+
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -m pytest --version >/dev/null 2>&1; then
+      printf '%s -m pytest -q\n' "$(command -v "$candidate")"
+      return 0
+    fi
+  done
+
+  if command -v pytest >/dev/null 2>&1; then
+    printf '%s -q\n' "$(command -v pytest)"
+    return 0
+  fi
+
+  return 1
 }
 
 normalise_num() {
@@ -374,13 +394,7 @@ if [[ -n "$(git -C "$REPO_DIR" status --porcelain)" ]]; then
 fi
 
 if [[ "$RUN_TESTS" -eq 1 && -z "${TEST_CMD:-}" ]]; then
-  if command -v python3 >/dev/null 2>&1; then
-    TEST_CMD="$(command -v python3) -m pytest -q"
-  elif command -v python >/dev/null 2>&1; then
-    TEST_CMD="$(command -v python) -m pytest -q"
-  else
-    fail "No Python interpreter found for tests. Install python3 or set TEST_CMD."
-  fi
+  TEST_CMD="$(resolve_default_test_cmd)" || fail "No pytest-capable test command found. Install pytest or set TEST_CMD."
 fi
 
 SELECTED_PROMPTS=()
