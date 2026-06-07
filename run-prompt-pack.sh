@@ -300,6 +300,7 @@ while [[ $# -gt 0 ]]; do
       ;;
 
     -h|--help)
+      NOTIFY=0
       usage
       exit 0
       ;;
