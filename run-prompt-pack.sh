@@ -17,11 +17,22 @@ AUTO_YES=0
 
 MODEL=""
 VARIANT="xhigh"
+VERSION="0.1.2"
+DEFAULT_MODEL_CODEX="gpt-5.4-mini"
+DEFAULT_MODEL_OPENCODE="openai/gpt-5.4-mini"
+DEFAULT_MODEL_CLAUDE="sonnet"
 
 usage() {
-  cat <<'USAGE'
+  cat <<USAGE
 Usage:
   run-prompt-pack.sh [OPTIONS]
+Version: $VERSION
+Default codex model: $DEFAULT_MODEL_CODEX
+Default opencode model: $DEFAULT_MODEL_OPENCODE
+Default claude model: $DEFAULT_MODEL_CLAUDE
+USAGE
+
+  cat <<'USAGE'
 
 Runs numbered Markdown prompt files one at a time. Each selected prompt must be
 named NN-something.md, for example 01-fix-ci.md. Files named 00-*.md are skipped.
@@ -36,7 +47,7 @@ Options:
       --start NUM          Alias for --first
   -l, --last NUM           Last prompt number to run, e.g. 04. Optional.
       --finish NUM         Alias for --last
-  -m, --model MODEL        Override model name
+  -m, --model MODEL        Override model name. Defaults are listed above.
       --variant VALUE      Reasoning/variant/effort value. Default: xhigh
       --automatic          Fully unattended mode where supported. Prints a loud
                            warning and asks for confirmation unless --yes is
@@ -64,7 +75,7 @@ Automatic behaviour:
 Examples:
   run-prompt-pack.sh
   run-prompt-pack.sh --repo /home/dev/my-repo --first 01 --last 02
-  run-prompt-pack.sh --prompt-dir ../squarespace-to-astro-repair-prompts-v2
+  run-prompt-pack.sh --prompt-dir ./ignore/prompts
   run-prompt-pack.sh --first 01 --last 02
   run-prompt-pack.sh --start=02 --finish=04
   run-prompt-pack.sh --agent codex --model gpt-5.4-mini --automatic -n
@@ -316,13 +327,13 @@ fi
 if [[ -z "$MODEL" ]]; then
   case "$AGENT" in
     codex)
-      MODEL="gpt-5.4-mini"
+      MODEL="$DEFAULT_MODEL_CODEX"
       ;;
     opencode)
-      MODEL="openai/gpt-5.4-mini"
+      MODEL="$DEFAULT_MODEL_OPENCODE"
       ;;
     claude)
-      MODEL="sonnet"
+      MODEL="$DEFAULT_MODEL_CLAUDE"
       ;;
   esac
 fi
