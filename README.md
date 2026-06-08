@@ -31,10 +31,11 @@ chmod +x ./*.sh
 - macOS (tested on recent versions)
 - Homebrew (recommended)
 - Tools used by various scripts: `git`, `gh`, `ffmpeg`, `ffprobe`, `python3`, `zip`, `cliclick`, `openconnect`
+- Optional AI coding agents for `run-prompt-pack.sh`: `codex`, `opencode`, or `claude`
 
 ## Repository layout
 
-- Root scripts: `brew_backup.sh`, `deploy.sh`, `init-commit-create-push-github.sh`, `join_videos.sh`, `run_script_on.sh`, `show_mailmate_config.sh`, `set_mailmate_config.sh`, `update_mailmate_keys.sh`, `sync_repo.sh`
+- Root scripts: `brew_backup.sh`, `deploy.sh`, `init-commit-create-push-github.sh`, `join_videos.sh`, `run-prompt-pack.sh`, `run_script_on.sh`, `show_mailmate_config.sh`, `set_mailmate_config.sh`, `update_mailmate_keys.sh`, `sync_repo.sh`
 - `bin/`: deployed, executable copies intended to be on your PATH (populated by `deploy.sh`)
 - `backups/`: archives and helper scripts (e.g. MailMate config backups)
 - `decomissioned/`: retired or special-purpose utilities
@@ -81,6 +82,32 @@ chmod +x ./*.sh
 ./sync_repo.sh /path/to/repo   # dry-run by default; pass --apply to perform stash/pull/push
 ```
 
+- Run a numbered prompt pack through an AI coding agent:
+
+```bash
+./run-prompt-pack.sh
+./run-prompt-pack.sh --repo /home/dev/my-repo --first 01 --last 03
+./run-prompt-pack.sh --branch prompt-pack/my-run --agent codex --model gpt-5.4-mini
+./run-prompt-pack.sh --rollback-on-error --rollback-yes --first 01 --last 02
+```
+
+`run-prompt-pack.sh` runs `NN-name.md` files from `ignore/prompts` one at a time,
+skipping `00-*.md`. Run it from the repository root, or pass `--repo /path/to/repo`
+when launching it from another directory. It defaults to `codex` with model
+`gpt-5.4-mini`; `opencode` defaults to `openai/gpt-5.4-mini`, and `claude`
+defaults to `sonnet`.
+
+By default, `run-prompt-pack.sh` creates or switches to a `prompt-pack/YYYYMMDD-HHMMSS`
+branch before running prompts. Pass `--branch NAME` to choose a branch, or
+`--no-branch` to run on the current branch. If the script-created branch ends
+with no commits, no remaining changes, and no new ignored files, the script
+switches back and deletes that empty branch.
+
+Tests are enabled by default. The script never falls back to global `pytest`;
+it uses repo virtualenv Python when pytest is installed there, or `uv run` /
+`poetry run` when `uv.lock` / `poetry.lock` is present. Set `TEST_CMD` to provide
+an explicit shell command run from the repo root, or pass `--no-tests`.
+
 ### `bin/` and deployment
 
 `bin/` is the on-machine deploy target. Use `deploy.sh` from the repository root to copy
@@ -91,6 +118,9 @@ should not be deduplicated or removed by automated tidy tasks.
 
 - `deploy.sh` can overwrite or delete files in `./bin`; keep backups and inspect before running.
 - `init-commit-create-push-github.sh` may reinitialize repositories and affect existing `.git` data.
+- `run-prompt-pack.sh` is provided as-is and can break things, especially with `--automatic`, rollback, and `--rollback-clean-ignored`.
+- `run-prompt-pack.sh --automatic` bypasses normal agent approval prompts where supported; review the selected prompts and repository first.
+- `run-prompt-pack.sh --rollback-clean-ignored` removes all ignored untracked files during rollback, including ignored files that existed before the run.
 - `set_mailmate_config.sh` and `update_mailmate_keys.sh` change MailMate defaults/keybindings using `defaults`.
 - Scripts in `decomissioned/` may reference external helpers or store sensitive data; review carefully.
 Note: Many scripts now default to a non-destructive dry-run mode. To actually
