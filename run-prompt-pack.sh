@@ -15,8 +15,10 @@ COMMIT_CHANGES=1
 AUTOMATIC=0
 AUTO_YES=0
 ROLLBACK_ON_ERROR=0
-ROLLBACK_YES=0
+DISABLE_ROLLBACK_ON_ERROR_PROMPT=0
 ROLLBACK_CLEAN_IGNORED=0
+ROLLBACK_RESULT="not attempted"
+BRANCH_CLEANUP_RESULT="not attempted"
 BRANCH_NAME=""
 NO_BRANCH=0
 BRANCH_CREATED=0
@@ -27,7 +29,7 @@ ACTIVE_BRANCH=""
 
 MODEL=""
 VARIANT="xhigh"
-VERSION="0.5.0"
+VERSION="0.6.0"
 DEFAULT_MODEL_CODEX="gpt-5.4-mini"
 DEFAULT_MODEL_OPENCODE="openai/gpt-5.4-mini"
 DEFAULT_MODEL_CLAUDE="sonnet"
@@ -78,15 +80,14 @@ Options:
                            failed. Notifications are enabled by default.
       --no-tests           Do not run tests after each prompt
       --no-commit          Do not commit after each prompt
-      --rollback-on-error  Offer to reset and clean changes made by the failed
-                           prompt.
-      --rollback-yes       Auto-confirm rollback without prompting. Requires
-                           --rollback-on-error. Also required when combining
-                           --automatic with --rollback-on-error.
+      --rollback-on-error  Automatically reset and clean changes made by the
+                           failed prompt without prompting.
+      --disable-rollback-on-error-prompt
+                           Do not offer rollback when a prompt fails.
       --rollback-clean-ignored
                            Also remove all ignored untracked files during
                            rollback, including files that existed before this
-                           run. Requires --rollback-on-error.
+                           run.
   -h, --help               Show this help
 
 Default behaviour:
@@ -99,11 +100,18 @@ Default behaviour:
   use interactive modes so you can answer prompts or approve actions. OpenCode
   runs without --dangerously-skip-permissions.
 
+  When a prompt fails, rollback is offered by default on interactive terminals.
+  Use --rollback-on-error to roll back automatically, or
+  --disable-rollback-on-error-prompt to avoid rollback offers.
+
 Automatic behaviour:
   With --automatic, the script uses each harness's unattended mode:
   - codex:   codex exec --dangerously-bypass-approvals-and-sandbox
   - opencode: opencode run --dangerously-skip-permissions
   - claude:  claude -p --dangerously-skip-permissions
+  Because --automatic cannot answer rollback prompts, also pass
+  --rollback-on-error to roll back automatically or
+  --disable-rollback-on-error-prompt to fail without rollback.
 
 Examples:
   run-prompt-pack.sh
@@ -111,8 +119,8 @@ Examples:
   run-prompt-pack.sh --prompt-dir ./ignore/prompts
   run-prompt-pack.sh --first 01 --last 02
   run-prompt-pack.sh --start=02 --finish=04
-  run-prompt-pack.sh --rollback-on-error --first 01 --last 03
-  run-prompt-pack.sh --agent codex --model gpt-5.4-mini --automatic --yes
+  run-prompt-pack.sh --disable-rollback-on-error-prompt --first 01 --last 03
+  run-prompt-pack.sh --agent codex --model gpt-5.4-mini --automatic --yes --rollback-on-error
   run-prompt-pack.sh --agent opencode --model openai/gpt-5.4-mini --variant xhigh
   run-prompt-pack.sh --agent claude --model sonnet --variant xhigh
 
@@ -160,11 +168,11 @@ rollback_failed_prompt() {
   echo "  git -C $(shell_quote "$REPO_DIR") clean $clean_flags"
   echo
 
-  git -C "$REPO_DIR" reset --hard "$checkpoint_sha"
-  git -C "$REPO_DIR" clean "$clean_flags"
+  git -C "$REPO_DIR" reset --hard "$checkpoint_sha" || return $?
+  git -C "$REPO_DIR" clean "$clean_flags" || return $?
   echo
   echo "Git status after rollback:"
-  git -C "$REPO_DIR" status --short
+  git -C "$REPO_DIR" status --short || return $?
 }
 
 handle_prompt_failure() {
@@ -182,18 +190,31 @@ handle_prompt_failure() {
   git -C "$REPO_DIR" status --short
   echo
 
-  if [[ "$ROLLBACK_ON_ERROR" -ne 1 ]]; then
-    echo "Rollback is disabled. Re-run with --rollback-on-error to offer cleanup on failures."
+  ROLLBACK_RESULT="not attempted"
+
+  if [[ "$DISABLE_ROLLBACK_ON_ERROR_PROMPT" -eq 1 ]]; then
+    ROLLBACK_RESULT="disabled by --disable-rollback-on-error-prompt"
+    echo "Rollback prompt disabled by --disable-rollback-on-error-prompt."
     return 0
   fi
 
-  if [[ "$ROLLBACK_YES" -eq 1 ]]; then
+  if [[ "$ROLLBACK_ON_ERROR" -eq 1 ]]; then
+    set +e
     rollback_failed_prompt "$prompt_file" "$checkpoint_sha"
+    local rollback_exit=$?
+    set -e
+
+    if [[ "$rollback_exit" -eq 0 ]]; then
+      ROLLBACK_RESULT="automatic rollback completed"
+    else
+      ROLLBACK_RESULT="automatic rollback failed with exit code $rollback_exit"
+    fi
     return 0
   fi
 
   if [[ ! -t 0 ]]; then
-    echo "Rollback requires confirmation on an interactive terminal. Re-run with --rollback-on-error --rollback-yes to auto-confirm."
+    ROLLBACK_RESULT="not offered because stdin is not interactive"
+    echo "Rollback requires confirmation on an interactive terminal. Re-run with --rollback-on-error to auto-rollback."
     return 0
   fi
 
@@ -207,9 +228,19 @@ handle_prompt_failure() {
   read -r -p "Rollback changes from this failed prompt? [y/N] " rollback_reply
   case "$rollback_reply" in
     y|Y|yes|YES)
+      set +e
       rollback_failed_prompt "$prompt_file" "$checkpoint_sha"
+      local rollback_exit=$?
+      set -e
+
+      if [[ "$rollback_exit" -eq 0 ]]; then
+        ROLLBACK_RESULT="prompted rollback accepted and completed"
+      else
+        ROLLBACK_RESULT="prompted rollback accepted but failed with exit code $rollback_exit"
+      fi
       ;;
     *)
+      ROLLBACK_RESULT="prompted rollback declined"
       echo "Rollback skipped."
       ;;
   esac
@@ -416,30 +447,89 @@ cleanup_empty_created_branch() {
   local current_head
   local status_output
   local status_with_ignored
+  local cleanup_status
 
   if [[ "$BRANCH_CREATED" -ne 1 || -z "$ACTIVE_BRANCH" ]]; then
+    BRANCH_CLEANUP_RESULT="not applicable"
     return 0
   fi
 
   current_branch="$(current_branch_name 2>/dev/null || true)"
   if [[ "$current_branch" != "$ACTIVE_BRANCH" ]]; then
+    BRANCH_CLEANUP_RESULT="skipped because current branch is ${current_branch:-detached or unknown}, not $ACTIVE_BRANCH"
     return 0
   fi
 
-  current_head="$(git -C "$REPO_DIR" rev-parse HEAD)" || return 1
-  status_output="$(git -C "$REPO_DIR" status --porcelain)" || return 1
-  status_with_ignored="$(git -C "$REPO_DIR" status --porcelain --ignored)" || return 1
+  current_head="$(git -C "$REPO_DIR" rev-parse HEAD)" || {
+    cleanup_status=$?
+    BRANCH_CLEANUP_RESULT="failed to read current HEAD with exit code $cleanup_status"
+    return "$cleanup_status"
+  }
+  status_output="$(git -C "$REPO_DIR" status --porcelain)" || {
+    cleanup_status=$?
+    BRANCH_CLEANUP_RESULT="failed to read git status with exit code $cleanup_status"
+    return "$cleanup_status"
+  }
+  status_with_ignored="$(git -C "$REPO_DIR" status --porcelain --ignored)" || {
+    cleanup_status=$?
+    BRANCH_CLEANUP_RESULT="failed to read ignored git status with exit code $cleanup_status"
+    return "$cleanup_status"
+  }
 
   if [[ "$current_head" != "$ORIGINAL_HEAD" || -n "$status_output" || "$status_with_ignored" != "$ORIGINAL_STATUS_WITH_IGNORED" ]]; then
+    BRANCH_CLEANUP_RESULT="branch retained because it has commits, changes, or new ignored files"
     return 0
   fi
 
   echo
   echo "Created branch has no commits, remaining changes, or new ignored files; deleting it: $ACTIVE_BRANCH"
-  git -C "$REPO_DIR" switch "$ORIGINAL_BRANCH"
-  git -C "$REPO_DIR" branch -d "$ACTIVE_BRANCH"
+  local deleted_branch="$ACTIVE_BRANCH"
+  git -C "$REPO_DIR" switch "$ORIGINAL_BRANCH" || {
+    cleanup_status=$?
+    BRANCH_CLEANUP_RESULT="failed to switch back to $ORIGINAL_BRANCH with exit code $cleanup_status"
+    return "$cleanup_status"
+  }
+  git -C "$REPO_DIR" branch -d "$deleted_branch" || {
+    cleanup_status=$?
+    BRANCH_CLEANUP_RESULT="failed to delete $deleted_branch with exit code $cleanup_status"
+    return "$cleanup_status"
+  }
   BRANCH_CREATED=0
   ACTIVE_BRANCH="$ORIGINAL_BRANCH"
+  BRANCH_CLEANUP_RESULT="deleted empty branch $deleted_branch and returned to $ORIGINAL_BRANCH"
+}
+
+print_failure_summary() {
+  local prompt_file="$1"
+  local exit_code="$2"
+  local checkpoint_sha="$3"
+  local working_branch="$4"
+  local branch_cleanup_result="$5"
+  local current_branch
+  local status_output
+
+  current_branch="$(current_branch_name 2>/dev/null || true)"
+
+  echo
+  echo "Failure summary:"
+  echo "  Prompt file: $prompt_file"
+  echo "  Exit code: $exit_code"
+  echo "  Repo root: $REPO_DIR"
+  echo "  Working branch: ${working_branch:-unknown}"
+  echo "  Current branch: ${current_branch:-detached or unknown}"
+  echo "  Checkpoint: $checkpoint_sha"
+  echo "  Rollback: $ROLLBACK_RESULT"
+  echo "  Branch cleanup: $branch_cleanup_result"
+  echo "  Final git status:"
+  if status_output="$(git -C "$REPO_DIR" status --short 2>/dev/null)"; then
+    if [[ -n "$status_output" ]]; then
+      printf '%s\n' "$status_output" | sed 's/^/    /'
+    else
+      echo "    (clean)"
+    fi
+  else
+    echo "    (unavailable)"
+  fi
 }
 
 normalise_num() {
@@ -617,13 +707,13 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
 
-    --rollback-yes)
-      ROLLBACK_YES=1
+    --rollback-clean-ignored)
+      ROLLBACK_CLEAN_IGNORED=1
       shift
       ;;
 
-    --rollback-clean-ignored)
-      ROLLBACK_CLEAN_IGNORED=1
+    --disable-rollback-on-error-prompt)
+      DISABLE_ROLLBACK_ON_ERROR_PROMPT=1
       shift
       ;;
 
@@ -643,16 +733,12 @@ if [[ "$NO_BRANCH" -eq 1 && -n "$BRANCH_NAME" ]]; then
   fail "--branch and --no-branch cannot be used together."
 fi
 
-if [[ "$ROLLBACK_YES" -eq 1 && "$ROLLBACK_ON_ERROR" -ne 1 ]]; then
-  fail "--rollback-yes requires --rollback-on-error."
+if [[ "$ROLLBACK_ON_ERROR" -eq 1 && "$DISABLE_ROLLBACK_ON_ERROR_PROMPT" -eq 1 ]]; then
+  fail "--rollback-on-error and --disable-rollback-on-error-prompt cannot be used together."
 fi
 
-if [[ "$ROLLBACK_CLEAN_IGNORED" -eq 1 && "$ROLLBACK_ON_ERROR" -ne 1 ]]; then
-  fail "--rollback-clean-ignored requires --rollback-on-error."
-fi
-
-if [[ "$AUTOMATIC" -eq 1 && "$ROLLBACK_ON_ERROR" -eq 1 && "$ROLLBACK_YES" -ne 1 ]]; then
-  fail "--automatic with --rollback-on-error requires --rollback-yes."
+if [[ "$AUTOMATIC" -eq 1 && "$ROLLBACK_ON_ERROR" -ne 1 && "$DISABLE_ROLLBACK_ON_ERROR_PROMPT" -ne 1 ]]; then
+  fail "--automatic requires either --rollback-on-error or --disable-rollback-on-error-prompt."
 fi
 
 case "$AGENT" in
@@ -775,7 +861,8 @@ echo "Repo environment: ${REPO_ENV_BIN:-none detected}"
 echo "Automatic: $AUTOMATIC"
 echo "Run tests: $RUN_TESTS"
 echo "Commit changes: $COMMIT_CHANGES"
-echo "Rollback on error: $ROLLBACK_ON_ERROR"
+echo "Automatic rollback on error: $ROLLBACK_ON_ERROR"
+echo "Rollback prompt disabled: $DISABLE_ROLLBACK_ON_ERROR_PROMPT"
 echo "Rollback clean ignored: $ROLLBACK_CLEAN_IGNORED"
 echo "Notify: $NOTIFY"
 echo
@@ -892,6 +979,9 @@ for prompt_file in "${SELECTED_PROMPTS[@]}"; do
   name="$(basename "$prompt_file" .md)"
   checkpoint_sha="$(git -C "$REPO_DIR" rev-parse HEAD)"
   prompt_exit=0
+  working_branch="${ACTIVE_BRANCH:-$(current_branch_name 2>/dev/null || true)}"
+  ROLLBACK_RESULT="not attempted"
+  BRANCH_CLEANUP_RESULT="not attempted"
 
   set +e
   run_prompt_iteration "$prompt_file" "$name"
@@ -901,6 +991,7 @@ for prompt_file in "${SELECTED_PROMPTS[@]}"; do
   if [[ "$prompt_exit" -ne 0 ]]; then
     handle_prompt_failure "$prompt_file" "$checkpoint_sha" "$prompt_exit"
     cleanup_empty_created_branch || true
+    print_failure_summary "$prompt_file" "$prompt_exit" "$checkpoint_sha" "$working_branch" "$BRANCH_CLEANUP_RESULT"
     exit "$prompt_exit"
   fi
 done
