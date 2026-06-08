@@ -17,7 +17,6 @@ AUTO_YES=0
 ROLLBACK_ON_ERROR=0
 ROLLBACK_YES=0
 ROLLBACK_CLEAN_IGNORED=0
-RUN_STARTED=0
 BRANCH_NAME=""
 NO_BRANCH=0
 BRANCH_CREATED=0
@@ -173,6 +172,7 @@ handle_prompt_failure() {
   local checkpoint_sha="$2"
   local exit_code="$3"
   local rollback_reply
+  local clean_flags="-fd"
 
   echo
   echo "Prompt failed: $prompt_file"
@@ -197,11 +197,12 @@ handle_prompt_failure() {
     return 0
   fi
 
-  echo "Rollback will reset --hard to $checkpoint_sha and run git clean -fd."
   if [[ "$ROLLBACK_CLEAN_IGNORED" -eq 1 ]]; then
+    clean_flags="-fdx"
     echo "WARNING: --rollback-clean-ignored is set; git clean -fdx will also remove ignored files,"
     echo "including ignored files that existed before this run."
   fi
+  echo "Rollback will reset --hard to $checkpoint_sha and run git clean $clean_flags."
 
   read -r -p "Rollback changes from this failed prompt? [y/N] " rollback_reply
   case "$rollback_reply" in
@@ -488,12 +489,10 @@ on_exit() {
 
   cleanup_empty_created_branch || true
 
-  if [[ "$RUN_STARTED" -eq 1 ]]; then
-    if [[ "$code" -eq 0 ]]; then
-      send_notification "Prompt pack finished" "All selected prompts completed."
-    else
-      send_notification "Prompt pack failed" "Stopped with exit code $code."
-    fi
+  if [[ "$code" -eq 0 ]]; then
+    send_notification "Prompt pack finished" "All selected prompts completed."
+  else
+    send_notification "Prompt pack failed" "Stopped with exit code $code."
   fi
 
   exit "$code"
@@ -889,8 +888,6 @@ if [[ "$AUTOMATIC" -eq 1 ]]; then
   confirm_automatic_mode
 fi
 
-RUN_STARTED=1
-
 for prompt_file in "${SELECTED_PROMPTS[@]}"; do
   name="$(basename "$prompt_file" .md)"
   checkpoint_sha="$(git -C "$REPO_DIR" rev-parse HEAD)"
@@ -910,5 +907,5 @@ done
 
 echo
 echo "All selected prompts completed."
-cleanup_empty_created_branch || true
+cleanup_empty_created_branch
 git -C "$REPO_DIR" status --short

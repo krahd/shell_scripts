@@ -88,7 +88,8 @@ chmod +x ./*.sh
 ./run-prompt-pack.sh
 ./run-prompt-pack.sh --repo /home/dev/my-repo --first 01 --last 03
 ./run-prompt-pack.sh --branch prompt-pack/my-run --agent codex --model gpt-5.4-mini
-./run-prompt-pack.sh --rollback-on-error --rollback-yes --first 01 --last 02
+./run-prompt-pack.sh --rollback-on-error --first 01 --last 02
+./run-prompt-pack.sh --automatic --yes --rollback-on-error --rollback-yes
 ```
 
 `run-prompt-pack.sh` runs `NN-name.md` files from `ignore/prompts` one at a time,
@@ -108,6 +109,9 @@ it uses repo virtualenv Python when pytest is installed there, or `uv run` /
 `poetry run` when `uv.lock` / `poetry.lock` is present. Set `TEST_CMD` to provide
 an explicit shell command run from the repo root, or pass `--no-tests`.
 
+Rollback is interactive by default. Use `--rollback-yes` only for unattended
+rollback; it is required when combining `--automatic` with `--rollback-on-error`.
+
 ### `bin/` and deployment
 
 `bin/` is the on-machine deploy target. Use `deploy.sh` from the repository root to copy
@@ -120,6 +124,7 @@ should not be deduplicated or removed by automated tidy tasks.
 - `init-commit-create-push-github.sh` may reinitialize repositories and affect existing `.git` data.
 - `run-prompt-pack.sh` is provided as-is and can break things, especially with `--automatic`, rollback, and `--rollback-clean-ignored`.
 - `run-prompt-pack.sh --automatic` bypasses normal agent approval prompts where supported; review the selected prompts and repository first.
+- `run-prompt-pack.sh --automatic --rollback-on-error` must also include `--rollback-yes` because rollback cannot be confirmed interactively.
 - `run-prompt-pack.sh --rollback-clean-ignored` removes all ignored untracked files during rollback, including ignored files that existed before the run.
 - `set_mailmate_config.sh` and `update_mailmate_keys.sh` change MailMate defaults/keybindings using `defaults`.
 - Scripts in `decomissioned/` may reference external helpers or store sensitive data; review carefully.
