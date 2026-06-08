@@ -17,6 +17,7 @@ AUTO_YES=0
 ROLLBACK_ON_ERROR=0
 ROLLBACK_YES=0
 ROLLBACK_CLEAN_IGNORED=0
+RUN_STARTED=0
 BRANCH_NAME=""
 NO_BRANCH=0
 BRANCH_CREATED=0
@@ -80,7 +81,9 @@ Options:
       --no-commit          Do not commit after each prompt
       --rollback-on-error  Offer to reset and clean changes made by the failed
                            prompt.
-      --rollback-yes       Auto-confirm rollback. Requires --rollback-on-error.
+      --rollback-yes       Auto-confirm rollback without prompting. Requires
+                           --rollback-on-error. Also required when combining
+                           --automatic with --rollback-on-error.
       --rollback-clean-ignored
                            Also remove all ignored untracked files during
                            rollback, including files that existed before this
@@ -192,6 +195,12 @@ handle_prompt_failure() {
   if [[ ! -t 0 ]]; then
     echo "Rollback requires confirmation on an interactive terminal. Re-run with --rollback-on-error --rollback-yes to auto-confirm."
     return 0
+  fi
+
+  echo "Rollback will reset --hard to $checkpoint_sha and run git clean -fd."
+  if [[ "$ROLLBACK_CLEAN_IGNORED" -eq 1 ]]; then
+    echo "WARNING: --rollback-clean-ignored is set; git clean -fdx will also remove ignored files,"
+    echo "including ignored files that existed before this run."
   fi
 
   read -r -p "Rollback changes from this failed prompt? [y/N] " rollback_reply
@@ -479,10 +488,12 @@ on_exit() {
 
   cleanup_empty_created_branch || true
 
-  if [[ "$code" -eq 0 ]]; then
-    send_notification "Prompt pack finished" "All selected prompts completed."
-  else
-    send_notification "Prompt pack failed" "Stopped with exit code $code."
+  if [[ "$RUN_STARTED" -eq 1 ]]; then
+    if [[ "$code" -eq 0 ]]; then
+      send_notification "Prompt pack finished" "All selected prompts completed."
+    else
+      send_notification "Prompt pack failed" "Stopped with exit code $code."
+    fi
   fi
 
   exit "$code"
@@ -639,6 +650,10 @@ fi
 
 if [[ "$ROLLBACK_CLEAN_IGNORED" -eq 1 && "$ROLLBACK_ON_ERROR" -ne 1 ]]; then
   fail "--rollback-clean-ignored requires --rollback-on-error."
+fi
+
+if [[ "$AUTOMATIC" -eq 1 && "$ROLLBACK_ON_ERROR" -eq 1 && "$ROLLBACK_YES" -ne 1 ]]; then
+  fail "--automatic with --rollback-on-error requires --rollback-yes."
 fi
 
 case "$AGENT" in
@@ -874,6 +889,8 @@ if [[ "$AUTOMATIC" -eq 1 ]]; then
   confirm_automatic_mode
 fi
 
+RUN_STARTED=1
+
 for prompt_file in "${SELECTED_PROMPTS[@]}"; do
   name="$(basename "$prompt_file" .md)"
   checkpoint_sha="$(git -C "$REPO_DIR" rev-parse HEAD)"
@@ -893,5 +910,5 @@ done
 
 echo
 echo "All selected prompts completed."
-cleanup_empty_created_branch
+cleanup_empty_created_branch || true
 git -C "$REPO_DIR" status --short
