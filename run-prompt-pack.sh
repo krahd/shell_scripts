@@ -155,15 +155,18 @@ rollback_failed_prompt() {
   local checkpoint_sha="$2"
   local clean_flags="-fd"
 
-  echo
-  echo "Rollback requested for failed prompt: $prompt_file"
-  echo "This resets tracked changes and removes non-ignored untracked files."
   if [[ "$ROLLBACK_CLEAN_IGNORED" -eq 1 ]]; then
     clean_flags="-fdx"
-    echo "WARNING: ignored untracked files will also be removed because --rollback-clean-ignored is set."
-    echo "This includes ignored files that existed before this script run."
   fi
-  echo "This will run:"
+
+  echo
+  echo "Rolling back failed prompt: $prompt_file"
+  echo "Resets tracked changes and removes non-ignored untracked files."
+  if [[ "$clean_flags" == "-fdx" ]]; then
+    echo "WARNING: --rollback-clean-ignored is set; git clean -fdx also removes ignored files,"
+    echo "including ignored files that existed before this script run."
+  fi
+  echo "Running:"
   echo "  git -C $(shell_quote "$REPO_DIR") reset --hard $checkpoint_sha"
   echo "  git -C $(shell_quote "$REPO_DIR") clean $clean_flags"
   echo
@@ -175,12 +178,30 @@ rollback_failed_prompt() {
   git -C "$REPO_DIR" status --short || return $?
 }
 
+run_rollback() {
+  local prompt_file="$1"
+  local checkpoint_sha="$2"
+  local kind="$3"
+  local rollback_exit
+
+  set +e
+  rollback_failed_prompt "$prompt_file" "$checkpoint_sha"
+  rollback_exit=$?
+  set -e
+
+  if [[ "$rollback_exit" -eq 0 ]]; then
+    ROLLBACK_RESULT="$kind rollback completed"
+  else
+    ROLLBACK_RESULT="$kind rollback failed with exit code $rollback_exit"
+  fi
+}
+
 handle_prompt_failure() {
   local prompt_file="$1"
   local checkpoint_sha="$2"
   local exit_code="$3"
   local rollback_reply
-  local clean_flags="-fd"
+  local prompt_msg
 
   echo
   echo "Prompt failed: $prompt_file"
@@ -199,16 +220,7 @@ handle_prompt_failure() {
   fi
 
   if [[ "$ROLLBACK_ON_ERROR" -eq 1 ]]; then
-    set +e
-    rollback_failed_prompt "$prompt_file" "$checkpoint_sha"
-    local rollback_exit=$?
-    set -e
-
-    if [[ "$rollback_exit" -eq 0 ]]; then
-      ROLLBACK_RESULT="automatic rollback completed"
-    else
-      ROLLBACK_RESULT="automatic rollback failed with exit code $rollback_exit"
-    fi
+    run_rollback "$prompt_file" "$checkpoint_sha" "automatic"
     return 0
   fi
 
@@ -218,26 +230,16 @@ handle_prompt_failure() {
     return 0
   fi
 
+  prompt_msg="Rollback changes from this failed prompt?"
   if [[ "$ROLLBACK_CLEAN_IGNORED" -eq 1 ]]; then
-    clean_flags="-fdx"
-    echo "WARNING: --rollback-clean-ignored is set; git clean -fdx will also remove ignored files,"
-    echo "including ignored files that existed before this run."
+    prompt_msg+=" (--rollback-clean-ignored: pre-existing ignored files will also be removed)"
   fi
-  echo "Rollback will reset --hard to $checkpoint_sha and run git clean $clean_flags."
+  echo "Rollback would reset --hard to $checkpoint_sha."
 
-  read -r -p "Rollback changes from this failed prompt? [y/N] " rollback_reply
+  read -r -p "$prompt_msg [y/N] " rollback_reply
   case "$rollback_reply" in
     y|Y|yes|YES)
-      set +e
-      rollback_failed_prompt "$prompt_file" "$checkpoint_sha"
-      local rollback_exit=$?
-      set -e
-
-      if [[ "$rollback_exit" -eq 0 ]]; then
-        ROLLBACK_RESULT="prompted rollback accepted and completed"
-      else
-        ROLLBACK_RESULT="prompted rollback accepted but failed with exit code $rollback_exit"
-      fi
+      run_rollback "$prompt_file" "$checkpoint_sha" "prompted"
       ;;
     *)
       ROLLBACK_RESULT="prompted rollback declined"
@@ -385,10 +387,12 @@ branch_exists() {
 
 normalise_branch_name() {
   local branch_name="$1"
+  local normalised
 
   [[ -n "$branch_name" ]] || fail "Branch name cannot be empty."
-  git -C "$REPO_DIR" check-ref-format --branch "$branch_name" 2>/dev/null \
+  normalised="$(git -C "$REPO_DIR" check-ref-format --branch "$branch_name" 2>/dev/null)" \
     || fail "Invalid branch name: $branch_name"
+  printf '%s\n' "$normalised"
 }
 
 generate_prompt_branch_name() {
@@ -981,7 +985,6 @@ for prompt_file in "${SELECTED_PROMPTS[@]}"; do
   prompt_exit=0
   working_branch="${ACTIVE_BRANCH:-$(current_branch_name 2>/dev/null || true)}"
   ROLLBACK_RESULT="not attempted"
-  BRANCH_CLEANUP_RESULT="not attempted"
 
   set +e
   run_prompt_iteration "$prompt_file" "$name"
