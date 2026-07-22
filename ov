@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import NoReturn
 from urllib.parse import urlencode
 
 APP = "Obsidian"
@@ -42,7 +43,7 @@ SAFE = {
 UNSAFE = ("app", "bookmarks", "corePlugins")
 
 
-def fail(message: str, code: int = 1) -> "NoReturn":
+def fail(message: str, code: int = 1) -> NoReturn:
     print(f"ov: {message}", file=sys.stderr)
     raise SystemExit(code)
 
@@ -249,6 +250,9 @@ def load_profile() -> tuple[Path, Path, dict, dict, tuple[str, ...]]:
         fail("active profile.json must contain an object")
     if options.get("name") != name:
         fail(f"active profile name mismatch: expected {name!r}")
+    for required_path in ("appearance.json", "community-plugins.json", "plugins"):
+        if not lexical_exists(directory / required_path):
+            fail(f"active profile is incomplete: missing {directory / required_path}")
     required = [key for key in ("autoSync", "appearance", "communityPlugins")
                 if options.get(key) is not True]
     if required:
@@ -266,9 +270,11 @@ def load_profile() -> tuple[Path, Path, dict, dict, tuple[str, ...]]:
     return plugin, directory, data, options, tuple(dict.fromkeys(managed))
 
 
-def stage_profile(vault: Path):
+def stage_profile(vault: Path, *, same_filesystem: bool = False):
     plugin, profile, data, options, managed = load_profile()
-    context = tempfile.TemporaryDirectory(prefix=".ov-stage-", dir=vault)
+    context = tempfile.TemporaryDirectory(
+        prefix=".ov-stage-", dir=vault if same_filesystem else None
+    )
     root = Path(context.name) / ".obsidian"
     root.mkdir()
     for option, items in SAFE.items():
@@ -471,7 +477,7 @@ def main() -> None:
             if changed or identifier is None:
                 quit_obsidian()
                 context.cleanup()
-                context, stage, managed = stage_profile(target)
+                context, stage, managed = stage_profile(target, same_filesystem=True)
                 registry = load_registry()
                 conflicts = nested(registry, target)
                 if conflicts and not options.allow_nested:
