@@ -1,0 +1,503 @@
+#!/usr/bin/env python3
+"""Open a folder as an Obsidian vault with a shared safe Settings Profiles profile."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+import secrets
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+from urllib.parse import urlencode
+
+APP = "Obsidian"
+PLUGIN = "settings-profiles"
+CANONICAL = Path(os.environ.get(
+    "OV_CANONICAL_VAULT", "/Users/tom/obsidian/Tom_Main_Obsidian_Vault"
+)).expanduser()
+REGISTRY = Path(os.environ.get(
+    "OV_OBSIDIAN_REGISTRY",
+    str(Path.home() / "Library/Application Support/obsidian/obsidian.json"),
+)).expanduser()
+STATE = Path(os.environ.get(
+    "OV_STATE_DIR", str(Path.home() / ".local/state/ov")
+)).expanduser()
+LOCK = STATE / "ov.lock"
+REGISTRY_BACKUPS = STATE / "registry-backups"
+CONFIG_BACKUPS = STATE / "config-backups"
+SAFE = {
+    "appearance": ("appearance.json", "snippets", "themes"),
+    "communityPlugins": ("community-plugins.json", "plugins"),
+    "graph": ("graph.json",),
+    "hotkeys": ("hotkeys.json",),
+}
+UNSAFE = ("app", "bookmarks", "corePlugins")
+
+
+def fail(message: str, code: int = 1) -> "NoReturn":
+    print(f"ov: {message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def say(message: str, quiet: bool) -> None:
+    if not quiet:
+        print(f"ov: {message}", file=sys.stderr)
+
+
+def args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="ov",
+        description="Open a folder as an Obsidian vault and apply the shared safe profile.",
+    )
+    parser.add_argument("directory", nargs="?", default=".")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--allow-nested", action="store_true")
+    parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--version", action="version", version="ov 1.0.0")
+    return parser.parse_args()
+
+
+def require_macos() -> None:
+    if sys.platform != "darwin":
+        fail("macOS is required")
+    for command in ("open", "osascript", "pgrep"):
+        if shutil.which(command) is None:
+            fail(f"required command not found: {command}")
+
+
+def read_json(path: Path, label: str):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        fail(f"{label} not found: {path}")
+    except PermissionError:
+        fail(f"permission denied reading {label}: {path}")
+    except json.JSONDecodeError as exc:
+        fail(f"invalid JSON in {label} ({path}): {exc}")
+    except OSError as exc:
+        fail(f"cannot read {label} ({path}): {exc}")
+
+
+def fsync_dir(path: Path) -> None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
+
+
+def atomic_json(path: Path, value) -> None:
+    payload = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        mode = 0o600
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+        fsync_dir(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def lexical_exists(path: Path) -> bool:
+    return os.path.lexists(path)
+
+
+def within(path: Path, parent: Path) -> bool:
+    try:
+        return os.path.commonpath((str(path), str(parent))) == str(parent)
+    except ValueError:
+        return False
+
+
+def same(left: Path, right: Path) -> bool:
+    try:
+        return left.samefile(right)
+    except OSError:
+        return left.resolve(strict=False) == right.resolve(strict=False)
+
+
+def safe_links(root: Path) -> None:
+    if not lexical_exists(root):
+        return
+    if root.is_symlink():
+        fail(f"top-level profile symlink is not allowed: {root}")
+    resolved_root = root.resolve(strict=True)
+    paths = [root]
+    if root.is_dir():
+        paths = [Path(base) / name for base, dirs, files in os.walk(root)
+                 for name in (*dirs, *files)]
+    for path in paths:
+        if not path.is_symlink():
+            continue
+        target_text = os.readlink(path)
+        if os.path.isabs(target_text):
+            fail(f"absolute profile symlink is not allowed: {path}")
+        try:
+            target = path.resolve(strict=True)
+        except FileNotFoundError:
+            fail(f"broken profile symlink: {path}")
+        if not within(target, resolved_root):
+            fail(f"profile symlink escapes its tree: {path} -> {target_text}")
+
+
+def copy(source: Path, destination: Path) -> None:
+    if source.is_symlink():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(os.readlink(source), destination)
+    elif source.is_dir():
+        shutil.copytree(source, destination, symlinks=True)
+    else:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+
+def remove(path: Path) -> None:
+    if not lexical_exists(path):
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def profile_candidates(data: dict) -> list[Path]:
+    raw: list[str] = []
+    legacy = data.get("profilesPath")
+    if isinstance(legacy, str) and legacy.strip():
+        raw.append(legacy)
+    devices = data.get("devices")
+    if isinstance(devices, dict):
+        for value in devices.values():
+            if isinstance(value, str) and value.strip():
+                raw.append(value)
+    if os.environ.get("XDG_DATA_HOME"):
+        raw.append(str(Path(os.environ["XDG_DATA_HOME"]) / "ObsidianPlugins/Profiles"))
+    raw += [
+        str(Path.home() / ".local/share/ObsidianPlugins/Profiles"),
+        str(Path.home() / "Library/Application Support/ObsidianPlugins/Profiles"),
+    ]
+    result: list[Path] = []
+    for value in raw:
+        path = Path(value).expanduser()
+        if path.is_absolute():
+            path = path.resolve(strict=False)
+            if path not in result:
+                result.append(path)
+    return result
+
+
+def load_profile() -> tuple[Path, Path, dict, dict, tuple[str, ...]]:
+    canonical = CANONICAL.resolve(strict=False)
+    if not canonical.is_dir():
+        fail(f"canonical vault not found: {canonical}")
+    plugin = canonical / ".obsidian/plugins" / PLUGIN
+    for filename in ("manifest.json", "main.js", "data.json"):
+        if not (plugin / filename).is_file():
+            fail(f"incomplete Settings Profiles installation: missing {plugin / filename}")
+    manifest = read_json(plugin / "manifest.json", "plugin manifest")
+    if not isinstance(manifest, dict) or manifest.get("id") != PLUGIN:
+        fail(f"unexpected Settings Profiles manifest: {plugin / 'manifest.json'}")
+    data = read_json(plugin / "data.json", "plugin settings")
+    if not isinstance(data, dict):
+        fail("Settings Profiles data.json must contain an object")
+    if data.get("profileUpdate", True) is not True:
+        fail("enable Settings Profiles > Profile update in the canonical vault")
+    active = data.get("activeProfile")
+    name = active.get("name") if isinstance(active, dict) else active
+    if not isinstance(name, str) or not name.strip():
+        fail("select an active Settings Profiles profile in the canonical vault")
+    name = name.strip()
+    matches = []
+    for base in profile_candidates(data):
+        directory = base / name
+        if (directory / "profile.json").is_file():
+            matches.append((base.resolve(strict=True), directory.resolve(strict=True)))
+    unique = {str(directory): (base, directory) for base, directory in matches}
+    if not unique:
+        checked = "\n  ".join(str(path) for path in profile_candidates(data))
+        fail(f"active profile {name!r} not found; checked:\n  {checked}")
+    if len(unique) != 1:
+        fail(f"active profile {name!r} exists in multiple configured profile directories")
+    base, directory = next(iter(unique.values()))
+    if within(base, canonical) or within(directory, canonical):
+        fail("shared profile directory must be outside every vault")
+    options = read_json(directory / "profile.json", "active profile")
+    if not isinstance(options, dict):
+        fail("active profile.json must contain an object")
+    if options.get("name") != name:
+        fail(f"active profile name mismatch: expected {name!r}")
+    required = [key for key in ("autoSync", "appearance", "communityPlugins")
+                if options.get(key) is not True]
+    if required:
+        fail("enable these profile options: " + ", ".join(required))
+    unsafe = [key for key in UNSAFE if options.get(key) is True]
+    if unsafe:
+        fail("disable these unsafe profile options: " + ", ".join(unsafe))
+    managed: list[str] = []
+    safe_links(plugin)
+    for option, items in SAFE.items():
+        if options.get(option) is True:
+            managed.extend(items)
+            for item in items:
+                safe_links(directory / item)
+    return plugin, directory, data, options, tuple(dict.fromkeys(managed))
+
+
+def stage_profile(vault: Path):
+    plugin, profile, data, options, managed = load_profile()
+    context = tempfile.TemporaryDirectory(prefix=".ov-stage-", dir=vault)
+    root = Path(context.name) / ".obsidian"
+    root.mkdir()
+    for option, items in SAFE.items():
+        if options.get(option) is not True:
+            continue
+        for item in items:
+            source = profile / item
+            if lexical_exists(source):
+                copy(source, root / item)
+    target_plugin = root / "plugins" / PLUGIN
+    remove(target_plugin)
+    target_plugin.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(plugin, target_plugin, symlinks=True)
+    active = {"name": options["name"]}
+    if "modifiedAt" in options:
+        active["modifiedAt"] = options["modifiedAt"]
+    plugin_data = json.loads(json.dumps(data))
+    plugin_data["activeProfile"] = active
+    atomic_json(target_plugin / "data.json", plugin_data)
+    enabled_path = root / "community-plugins.json"
+    enabled = []
+    if enabled_path.is_file():
+        enabled = read_json(enabled_path, "shared community plugin list")
+        if not isinstance(enabled, list) or not all(isinstance(item, str) for item in enabled):
+            fail("shared community-plugins.json must be a string array")
+    enabled = list(dict.fromkeys(enabled))
+    if PLUGIN not in enabled:
+        enabled.append(PLUGIN)
+    atomic_json(enabled_path, enabled)
+    return context, root, managed
+
+
+def digest(path: Path) -> bytes:
+    result = hashlib.sha256()
+    if not lexical_exists(path):
+        result.update(b"missing")
+        return result.digest()
+    def add(entry: Path, relative: str) -> None:
+        result.update(relative.encode(errors="surrogateescape") + b"\0")
+        if entry.is_symlink():
+            result.update(b"link\0" + os.readlink(entry).encode(errors="surrogateescape"))
+        elif entry.is_dir():
+            result.update(b"dir\0")
+            for child in sorted(entry.iterdir(), key=lambda item: os.fsencode(item.name)):
+                add(child, f"{relative}/{child.name}")
+        elif entry.is_file():
+            result.update(b"file\0")
+            with entry.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    result.update(chunk)
+    add(path, "")
+    return result.digest()
+
+
+def backup_config(vault: Path, config: Path, items: list[str]) -> None:
+    existing = [item for item in items if lexical_exists(config / item)]
+    if not existing:
+        return
+    key = hashlib.sha256(str(vault).encode()).hexdigest()[:12]
+    parent = CONFIG_BACKUPS / f"{vault.name}-{key}"
+    destination = parent / f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
+    destination.mkdir(parents=True)
+    (destination / "vault.txt").write_text(str(vault) + "\n")
+    for item in existing:
+        copy(config / item, destination / item)
+    for old in sorted((p for p in parent.iterdir() if p.is_dir()))[:-5]:
+        shutil.rmtree(old, ignore_errors=True)
+
+
+def apply_profile(vault: Path, stage: Path, items: list[str], quiet: bool) -> None:
+    if not items:
+        return
+    config = vault / ".obsidian"
+    config.mkdir(exist_ok=True)
+    backup_config(vault, config, items)
+    quarantine = Path(tempfile.mkdtemp(prefix=".ov-old-", dir=vault))
+    applied: list[tuple[str, bool]] = []
+    try:
+        for item in items:
+            source, target, old = stage / item, config / item, quarantine / item
+            had_old = lexical_exists(target)
+            if had_old:
+                old.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(target, old)
+            if lexical_exists(source):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(source, target)
+            applied.append((item, had_old))
+        fsync_dir(config)
+    except Exception as exc:
+        for item, had_old in reversed(applied):
+            target, old = config / item, quarantine / item
+            remove(target)
+            if had_old and lexical_exists(old):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(old, target)
+        fail(f"profile synchronisation failed and was rolled back: {exc}")
+    finally:
+        shutil.rmtree(quarantine, ignore_errors=True)
+    say("synchronised shared appearance and plugins", quiet)
+
+
+def load_registry() -> dict:
+    registry = read_json(REGISTRY, "Obsidian vault registry")
+    if not isinstance(registry, dict):
+        fail("Obsidian registry must contain an object")
+    if not isinstance(registry.setdefault("vaults", {}), dict):
+        fail("Obsidian registry has an invalid vaults value")
+    return registry
+
+
+def registered_path(entry) -> Path | None:
+    value = entry.get("path") if isinstance(entry, dict) else None
+    if not isinstance(value, str) or not value:
+        return None
+    return Path(value).expanduser().resolve(strict=False)
+
+
+def vault_id(registry: dict, target: Path) -> str | None:
+    for identifier, entry in registry["vaults"].items():
+        path = registered_path(entry)
+        if path is not None and same(path, target):
+            return str(identifier)
+    return None
+
+
+def nested(registry: dict, target: Path) -> list[Path]:
+    conflicts = []
+    for entry in registry["vaults"].values():
+        path = registered_path(entry)
+        if path is not None and not same(path, target):
+            if within(target, path) or within(path, target):
+                conflicts.append(path)
+    return sorted(set(conflicts), key=str)
+
+
+def running() -> bool:
+    return subprocess.run(["pgrep", "-x", APP], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL).returncode == 0
+
+
+def quit_obsidian() -> None:
+    if not running():
+        return
+    subprocess.run(["osascript", "-e", f'tell application "{APP}" to quit'],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 15
+    while running() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    if running():
+        fail("Obsidian did not quit within 15 seconds; nothing was modified")
+
+
+def save_registry(registry: dict, quiet: bool) -> None:
+    REGISTRY_BACKUPS.mkdir(parents=True, exist_ok=True)
+    backup = REGISTRY_BACKUPS / f"obsidian-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}.json"
+    shutil.copy2(REGISTRY, backup)
+    for old in sorted(REGISTRY_BACKUPS.glob("obsidian-*.json"))[:-20]:
+        old.unlink(missing_ok=True)
+    atomic_json(REGISTRY, registry)
+    say(f"registry backup: {backup}", quiet)
+
+
+def open_vault(identifier: str) -> None:
+    uri = "obsidian://open?" + urlencode({"vault": identifier})
+    if subprocess.run(["open", uri]).returncode:
+        fail(f"could not open Obsidian vault {identifier}")
+
+
+def main() -> None:
+    options = args()
+    require_macos()
+    try:
+        target = Path(options.directory).expanduser().resolve(strict=True)
+    except FileNotFoundError:
+        fail(f"directory does not exist: {options.directory}")
+    if not target.is_dir():
+        fail(f"not a directory: {target}")
+    if not REGISTRY.is_file():
+        fail(f"Obsidian registry not found; launch Obsidian once: {REGISTRY}")
+    context = None
+    try:
+        context, stage, managed = stage_profile(target)
+        STATE.mkdir(parents=True, exist_ok=True)
+        with LOCK.open("a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            registry = load_registry()
+            conflicts = nested(registry, target)
+            if conflicts and not options.allow_nested:
+                fail("refusing nested vault relationship with:\n  " + "\n  ".join(map(str, conflicts)))
+            identifier = vault_id(registry, target)
+            changed = [item for item in managed
+                       if digest(stage / item) != digest(target / ".obsidian" / item)]
+            if options.force:
+                changed = list(managed)
+            if options.dry_run:
+                say("would synchronise: " + (", ".join(changed) or "nothing"), options.quiet)
+                say("would register vault" if identifier is None else f"vault already registered as {identifier}", options.quiet)
+                return
+            if changed or identifier is None:
+                quit_obsidian()
+                context.cleanup()
+                context, stage, managed = stage_profile(target)
+                registry = load_registry()
+                conflicts = nested(registry, target)
+                if conflicts and not options.allow_nested:
+                    fail("nested vault conflict after Obsidian quit:\n  " + "\n  ".join(map(str, conflicts)))
+                identifier = vault_id(registry, target)
+                changed = [item for item in managed
+                           if digest(stage / item) != digest(target / ".obsidian" / item)]
+                if options.force:
+                    changed = list(managed)
+                apply_profile(target, stage, changed, options.quiet)
+                if identifier is None:
+                    identifier = secrets.token_hex(8)
+                    while identifier in registry["vaults"]:
+                        identifier = secrets.token_hex(8)
+                    registry["vaults"][identifier] = {
+                        "path": str(target), "ts": int(time.time() * 1000), "open": False,
+                    }
+                    save_registry(registry, options.quiet)
+                    say(f"registered vault: {target}", options.quiet)
+            if identifier is None:
+                fail("internal error: vault ID was not resolved")
+        open_vault(identifier)
+    finally:
+        if context is not None:
+            context.cleanup()
+
+
+if __name__ == "__main__":
+    main()
